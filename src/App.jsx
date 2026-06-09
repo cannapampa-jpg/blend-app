@@ -1,0 +1,1435 @@
+import { useState, useEffect, useRef } from "react";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONFIGURACIÓN — completar después de crear cuenta EmailJS
+// ─────────────────────────────────────────────────────────────────────────────
+const EMAILJS_SERVICE_ID  = "service_wr5j7zc";   // ej: "service_abc123"
+const EMAILJS_TEMPLATE_ID = "template_19583x8";  // ej: "template_xyz789"
+const EMAILJS_PUBLIC_KEY  = "8rWDPanuVWEQXtyE4";   // ej: "aBcDeFgHiJkL"
+const MI_MAIL             = "cannapampa@gmail.com";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GOOGLE APPS SCRIPT — completar con tu Web App URL
+// ─────────────────────────────────────────────────────────────────────────────
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxND_KRuHNGwywz5AZYFHMNmqt9uMj2DCUHESxFUxbO9DycqkzZ487qTjFVbIm04xR0/exec"; // ej: "https://script.google.com/macros/s/.../exec"
+
+// ── Math ──────────────────────────────────────────────────────────────────────
+
+function solve({ thc1, cbd1, thc2, cbd2, volume, targetTHC, fixedCannabinoide, targetCBD }) {
+  const dTHC = thc1 - thc2;
+  const dCBD = cbd1 - cbd2;
+  let x, y, resultTHC, resultCBD;
+  if (fixedCannabinoide === "THC") {
+    if (Math.abs(dTHC) < 0.0001) return { feasible: false, warning: "Mismos %THC en ambos aceites." };
+    x = volume * (targetTHC - thc2) / dTHC;
+    y = volume - x;
+    if (x < -0.001 || y < -0.001) return { feasible: false, warning: `THC ${targetTHC}% fuera del rango alcanzable.` };
+    resultTHC = targetTHC;
+    resultCBD = (cbd1 * x + cbd2 * y) / volume;
+  } else {
+    if (Math.abs(dCBD) < 0.0001) return { feasible: false, warning: "Mismos %CBD en ambos aceites." };
+    x = volume * (targetCBD - cbd2) / dCBD;
+    y = volume - x;
+    if (x < -0.001 || y < -0.001) return { feasible: false, warning: `CBD ${targetCBD}% fuera del rango alcanzable.` };
+    resultCBD = targetCBD;
+    resultTHC = (thc1 * x + thc2 * y) / volume;
+  }
+  return { feasible: true, x: +Math.max(0,x).toFixed(1), y: +Math.max(0,y).toFixed(1), resultTHC: +resultTHC.toFixed(2), resultCBD: +resultCBD.toFixed(2) };
+}
+
+function blend(thc1, cbd1, thc2, cbd2, pct1) {
+  const t1 = pct1 / 100, t2 = 1 - t1;
+  return { thc: +(thc1*t1 + thc2*t2).toFixed(2), cbd: +(cbd1*t1 + cbd2*t2).toFixed(2) };
+}
+// ── Math 3 aceites ────────────────────────────────────────────────────────────
+// Resuelve: f1+f2+f3=1, THC1*f1+THC2*f2+THC3*f3=tTHC, CBD1*f1+CBD2*f2+CBD3*f3=tCBD
+// Sistema 3x3, solución exacta por sustitución
+function solve3({ oils, volume, targetTHC, targetCBD }) {
+  const [o1, o2, o3] = oils;
+  // f3 = 1 - f1 - f2
+  // (THC1-THC3)*f1 + (THC2-THC3)*f2 = tTHC - THC3
+  // (CBD1-CBD3)*f1 + (CBD2-CBD3)*f2 = tCBD - CBD3
+  const a = o1.thc - o3.thc, b = o2.thc - o3.thc, e = targetTHC - o3.thc;
+  const c = o1.cbd - o3.cbd, d = o2.cbd - o3.cbd, f = targetCBD - o3.cbd;
+  const det = a*d - b*c;
+  if (Math.abs(det) < 0.0001) return { feasible: false, warning: "Los aceites no forman un triángulo resolvible (determinante 0)." };
+  const f1 = (e*d - b*f) / det;
+  const f2 = (a*f - e*c) / det;
+  const f3 = 1 - f1 - f2;
+  if (f1 < -0.001 || f2 < -0.001 || f3 < -0.001)
+    return { feasible: false, warning: "El target THC/CBD está fuera del triángulo alcanzable con estos 3 aceites." };
+  const ml1 = +(Math.max(0,f1)*volume).toFixed(1);
+  const ml2 = +(Math.max(0,f2)*volume).toFixed(1);
+  const ml3 = +(Math.max(0,f3)*volume).toFixed(1);
+  const rTHC = +(o1.thc*f1 + o2.thc*f2 + o3.thc*f3).toFixed(2);
+  const rCBD = +(o1.cbd*f1 + o2.cbd*f2 + o3.cbd*f3).toFixed(2);
+  return { feasible: true, ml1, ml2, ml3,
+    pct1: +(f1*100).toFixed(1), pct2: +(f2*100).toFixed(1), pct3: +(f3*100).toFixed(1),
+    resultTHC: rTHC, resultCBD: rCBD };
+}
+
+// Genera el triángulo alcanzable: vértices + puntos intermedios para el canvas
+function trianglePoints(oils) {
+  // 3 vértices + puntos a lo largo de cada lado (para visualización)
+  const pts = [];
+  const steps = 20;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    // lado 1→2
+    pts.push({ thc: oils[0].thc*(1-t)+oils[1].thc*t, cbd: oils[0].cbd*(1-t)+oils[1].cbd*t, edge:"12" });
+    // lado 2→3
+    pts.push({ thc: oils[1].thc*(1-t)+oils[2].thc*t, cbd: oils[1].cbd*(1-t)+oils[2].cbd*t, edge:"23" });
+    // lado 1→3
+    pts.push({ thc: oils[0].thc*(1-t)+oils[2].thc*t, cbd: oils[0].cbd*(1-t)+oils[2].cbd*t, edge:"13" });
+  }
+  return pts;
+}
+
+
+
+// ── PDF generator (jsPDF via CDN) ─────────────────────────────────────────────
+
+async function loadJsPDF() {
+  if (window.jspdf) return window.jspdf.jsPDF;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s.onload = () => resolve(window.jspdf.jsPDF);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+function buildPDFData({ userEmail, thc1, cbd1, thc2, cbd2, mode, sliderPct1, sliderVol, calcResult, calcVolume, fixedCann, targetTHC, targetCBD }) {
+  const now = new Date();
+  const fecha = now.toLocaleDateString("es-AR", { day:"2-digit", month:"2-digit", year:"numeric" });
+  const hora  = now.toLocaleTimeString("es-AR", { hour:"2-digit", minute:"2-digit" });
+
+  let mezcla = {};
+  if (mode === "rango") {
+    const { thc, cbd } = blend(thc1, cbd1, thc2, cbd2, sliderPct1);
+    mezcla = {
+      modo: "Explorador de rango",
+      proporcion1: sliderPct1,
+      proporcion2: 100 - sliderPct1,
+      ml1: +(sliderVol * sliderPct1 / 100).toFixed(1),
+      ml2: +(sliderVol * (100 - sliderPct1) / 100).toFixed(1),
+      volumen: sliderVol,
+      thcFinal: thc,
+      cbdFinal: cbd,
+    };
+  } else {
+    mezcla = {
+      modo: "Calculadora por objetivo",
+      proporcion1: calcResult?.feasible ? +(calcResult.x / calcVolume * 100).toFixed(1) : "-",
+      proporcion2: calcResult?.feasible ? +(calcResult.y / calcVolume * 100).toFixed(1) : "-",
+      ml1: calcResult?.feasible ? calcResult.x : "-",
+      ml2: calcResult?.feasible ? calcResult.y : "-",
+      volumen: calcVolume,
+      thcFinal: calcResult?.feasible ? calcResult.resultTHC : "-",
+      cbdFinal: calcResult?.feasible ? calcResult.resultCBD : "-",
+      objetivo: fixedCann === "THC" ? `THC ${targetTHC}%` : `CBD ${targetCBD}%`,
+    };
+  }
+  return { fecha, hora, userEmail, thc1, cbd1, thc2, cbd2, mezcla };
+}
+
+async function generatePDF(data) {
+  const JsPDF = await loadJsPDF();
+  const doc = new JsPDF({ unit: "mm", format: "a4" });
+  const W = 210, ML = 18, MR = 18, TW = W - ML - MR;
+
+  // ── Paleta ──
+  const verde    = [95, 140, 40];
+  const verdeMid = [80, 120, 55];
+  const verdeOsc = [20, 35, 10];
+  const grisOsc  = [30, 30, 30];
+  const grisText = [80, 80, 80];
+  const blanco   = [255, 255, 255];
+  const amarillo = [220, 180, 50];
+
+  // ── Header band ──
+  doc.setFillColor(...verdeOsc);
+  doc.rect(0, 0, W, 38, "F");
+  doc.setFillColor(...verde);
+  doc.rect(0, 36, W, 2, "F");
+
+  // Logo text
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(18);
+  doc.setTextColor(...blanco);
+  doc.text("Cannabis Oil Blender", ML, 16);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9);
+  doc.setTextColor(180, 210, 120);
+  doc.text("Ing. Agr. Matías Bucat  ·  Responsable Técnico REPROCANN  ·  MN 18563", ML, 24);
+  doc.text(`Informe generado el ${data.fecha} a las ${data.hora}`, ML, 30);
+
+  // ── Datos del solicitante ──
+  let y = 48;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...verde);
+  doc.text("SOLICITANTE", ML, y);
+  doc.setDrawColor(...verde);
+  doc.setLineWidth(0.3);
+  doc.line(ML, y+1.5, ML+TW, y+1.5);
+
+  y += 8;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  doc.setTextColor(...grisOsc);
+  doc.text(`Email:  ${data.userEmail}`, ML, y);
+
+  // ── Aceites de origen ──
+  y += 14;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...verde);
+  doc.text("ACEITES DE ORIGEN", ML, y);
+  doc.line(ML, y+1.5, ML+TW, y+1.5);
+
+  y += 8;
+  // Table header
+  const colW = [TW*0.35, TW*0.32, TW*0.33];
+  const cols = [ML, ML+colW[0], ML+colW[0]+colW[1]];
+  doc.setFillColor(...verde);
+  doc.rect(ML, y-4.5, TW, 7, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...blanco);
+  ["Aceite", "THC %", "CBD %"].forEach((h, i) => doc.text(h, cols[i]+2, y));
+
+  y += 5;
+  [
+    ["Aceite 1", data.thc1+"%", data.cbd1+"%"],
+    ["Aceite 2", data.thc2+"%", data.cbd2+"%"],
+  ].forEach((row, ri) => {
+    doc.setFillColor(ri%2===0 ? 245 : 252, ri%2===0 ? 248 : 254, ri%2===0 ? 238 : 248);
+    doc.rect(ML, y-4, TW, 7, "F");
+    doc.setFont("helvetica", ri===0 ? "bold":"normal");
+    doc.setFontSize(9.5);
+    doc.setTextColor(...grisOsc);
+    row.forEach((cell, i) => doc.text(cell, cols[i]+2, y));
+    y += 7;
+  });
+
+  // ── Mezcla calculada ──
+  y += 8;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10);
+  doc.setTextColor(...verde);
+  doc.text("MEZCLA CALCULADA", ML, y);
+  doc.line(ML, y+1.5, ML+TW, y+1.5);
+
+  y += 8;
+  const m = data.mezcla;
+
+  // Modo badge
+  doc.setFillColor(...verdeMid);
+  doc.roundedRect(ML, y-4, 60, 7, 2, 2, "F");
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(...blanco);
+  doc.text(m.modo.toUpperCase(), ML+3, y);
+  if (m.objetivo) {
+    doc.setFillColor(...amarillo);
+    doc.roundedRect(ML+63, y-4, 40, 7, 2, 2, "F");
+    doc.setTextColor(40,30,0);
+    doc.text(`Objetivo: ${m.objetivo}`, ML+65, y);
+  }
+
+  y += 10;
+  // Proporción visual bar
+  const barW = TW;
+  const barH = 8;
+  const p1 = typeof m.proporcion1 === "number" ? m.proporcion1 : 50;
+  doc.setFillColor(95, 140, 40);
+  doc.roundedRect(ML, y, barW * p1/100, barH, 1, 1, "F");
+  doc.setFillColor(40, 140, 100);
+  doc.roundedRect(ML + barW*p1/100, y, barW*(1-p1/100), barH, 1, 1, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(...blanco);
+  if (p1 > 15) doc.text(`A1 ${m.proporcion1}%`, ML+3, y+5.5);
+  if ((100-p1) > 15) doc.text(`A2 ${m.proporcion2}%`, ML+barW*(p1/100)+3, y+5.5);
+
+  y += 13;
+  // Volumes table
+  doc.setFillColor(...verde);
+  doc.rect(ML, y-4.5, TW, 7, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(...blanco);
+  ["", "Aceite 1", "Aceite 2", "Total"].forEach((h,i) => {
+    doc.text(h, cols[0]+(i===0?0:(i-1)*colW[1])+2, y);
+  });
+  const vCols = [ML, ML+TW*0.28, ML+TW*0.56, ML+TW*0.78];
+
+  y += 5;
+  [
+    ["Proporción", m.proporcion1+"%", m.proporcion2+"%", "100%"],
+    ["Volumen (ml)", m.ml1+" ml", m.ml2+" ml", m.volumen+" ml"],
+  ].forEach((row, ri) => {
+    doc.setFillColor(ri%2===0 ? 245:252, ri%2===0 ? 248:254, ri%2===0 ? 238:248);
+    doc.rect(ML, y-4, TW, 7, "F");
+    doc.setFont("helvetica", ri===0?"normal":"bold");
+    doc.setFontSize(9.5); doc.setTextColor(...grisOsc);
+    row.forEach((cell,i) => doc.text(String(cell), vCols[i]+2, y));
+    y += 7;
+  });
+
+  // ── Concentración resultante ──
+  y += 8;
+  doc.setFont("helvetica","bold"); doc.setFontSize(10);
+  doc.setTextColor(...verde);
+  doc.text("CONCENTRACIÓN RESULTANTE", ML, y);
+  doc.line(ML, y+1.5, ML+TW, y+1.5);
+
+  y += 10;
+  const halfW = (TW - 6) / 2;
+  [
+    { label:"THC", val:m.thcFinal+"%", color:[95,140,40] },
+    { label:"CBD", val:m.cbdFinal+"%", color:[40,140,100] },
+  ].forEach(({ label, val, color }, i) => {
+    const bx = ML + i*(halfW+6);
+    doc.setFillColor(...color);
+    doc.roundedRect(bx, y-6, halfW, 18, 3, 3, "F");
+    doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(...blanco);
+    doc.text(label, bx+halfW/2, y, { align:"center" });
+    doc.setFontSize(20);
+    doc.text(String(val), bx+halfW/2, y+9, { align:"center" });
+  });
+
+  // ── Footer ──
+  y = 274;
+  doc.setFillColor(...verdeOsc);
+  doc.rect(0, y, W, 23, "F");
+  doc.setFillColor(...verde);
+  doc.rect(0, y, W, 1.5, "F");
+  doc.setFont("helvetica","normal"); doc.setFontSize(8);
+  doc.setTextColor(180,210,120);
+  doc.text("Ing. Agr. Matías Bucat  ·  MN 18563  ·  Responsable Técnico REPROCANN  ·  Ley 27.350", W/2, y+8, { align:"center" });
+  doc.setTextColor(120,160,80);
+  doc.text("Este informe es orientativo. Las concentraciones finales dependen de la homogeneidad de los aceites base.", W/2, y+15, { align:"center" });
+  doc.text(`cannapampa@gmail.com  ·  ${data.fecha}`, W/2, y+20, { align:"center" });
+
+  return doc;
+}
+
+// ── EmailJS sender ────────────────────────────────────────────────────────────
+
+async function loadEmailJS() {
+  if (window.emailjs) return window.emailjs;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js";
+    s.onload = () => { window.emailjs.init(EMAILJS_PUBLIC_KEY); resolve(window.emailjs); };
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
+
+async function sendReport({ userEmail, pdfDoc, pdfData }) {
+  const emailjs = await loadEmailJS();
+  const pdfBase64 = pdfDoc.output("datauristring").split(",")[1];
+  const { fecha, hora, mezcla, thc1, cbd1, thc2, cbd2 } = pdfData;
+
+  const params = {
+    to_email:    userEmail,
+    cc_email:    MI_MAIL,
+    subject:     `Informe Cannabis Oil Blender · ${fecha}`,
+    fecha, hora,
+    aceite1_thc: thc1, aceite1_cbd: cbd1,
+    aceite2_thc: thc2, aceite2_cbd: cbd2,
+    ml1: mezcla.ml1, ml2: mezcla.ml2,
+    volumen: mezcla.volumen,
+    thc_final: mezcla.thcFinal, cbd_final: mezcla.cbdFinal,
+    pdf_base64: pdfBase64,
+  };
+
+  return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params);
+}
+
+// ── Google Sheets log ─────────────────────────────────────────────────────────
+
+async function logToSheets(pdfData, userEmail) {
+  if (APPS_SCRIPT_URL === "TU_APPS_SCRIPT_URL") return; // skip until configured
+  const { fecha, hora, mezcla, thc1, cbd1, thc2, cbd2 } = pdfData;
+  try {
+    await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fecha, hora, email: userEmail,
+        thc1, cbd1, thc2, cbd2,
+        modo: mezcla.modo,
+        proporcion1: mezcla.proporcion1, proporcion2: mezcla.proporcion2,
+        ml1: mezcla.ml1, ml2: mezcla.ml2,
+        volumen: mezcla.volumen,
+        thc_final: mezcla.thcFinal, cbd_final: mezcla.cbdFinal,
+      }),
+    });
+  } catch (e) { console.warn("Sheets log failed", e); }
+}
+
+// ── UI atoms ──────────────────────────────────────────────────────────────────
+
+function NumInput({ label, value, onChange, unit="%", min=0, max=100, step="0.1" }) {
+  const [display, setDisplay] = useState(String(value));
+
+  // sync if parent changes value externally (e.g. chemotype button)
+  useEffect(() => {
+    setDisplay(String(value));
+  }, [value]);
+
+  function handleChange(e) {
+    const raw = e.target.value;
+    setDisplay(raw);
+    const parsed = parseFloat(raw);
+    if (!isNaN(parsed)) onChange(parsed);
+  }
+
+  function handleFocus(e) {
+    // clear field if value is 0 so user types fresh
+    if (parseFloat(display) === 0) setDisplay("");
+  }
+
+  function handleBlur(e) {
+    // restore 0 if left empty
+    if (display === "" || isNaN(parseFloat(display))) {
+      setDisplay("0");
+      onChange(0);
+    }
+  }
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+      <label style={{ fontSize:11, letterSpacing:"0.08em", textTransform:"uppercase", color:"#7a8a6a", fontWeight:600 }}>{label}</label>
+      <div style={{ display:"flex", alignItems:"center", background:"#1a2010", border:"1px solid #3a4a2a", borderRadius:6 }}>
+        <input type="number" min={min} max={max} step={step} value={display}
+          onChange={handleChange}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          style={{ flex:1, minWidth:0, width:0, background:"transparent", border:"none", outline:"none",
+            color:"#d4e8b0", fontSize:16, padding:"10px 6px 10px 10px", fontFamily:"'DM Mono',monospace",
+            MozAppearance:"textfield", WebkitAppearance:"none" }} />
+        <span style={{ paddingRight:10, paddingLeft:4, color:"#5a7040", fontSize:13, fontWeight:700, flexShrink:0, whiteSpace:"nowrap" }}>{unit}</span>
+      </div>
+    </div>
+  );
+}
+
+function OilCard({ num, thc, cbd, onTHC, onCBD, color, name, onName }) {
+  const [editing, setEditing] = useState(false);
+  const displayName = name || `Aceite ${num}`;
+  return (
+    <div style={{ background:"#131a0d", border:`1px solid ${color}44`, borderRadius:12, padding:18, position:"relative", overflow:"hidden" }}>
+      <div style={{ position:"absolute", top:0, left:0, right:0, height:3, background:`linear-gradient(90deg,${color},transparent)` }} />
+      <div style={{ marginBottom:12 }}>
+        {editing ? (
+          <input autoFocus value={displayName}
+            onChange={e => onName && onName(e.target.value)}
+            onBlur={() => setEditing(false)}
+            onKeyDown={e => e.key==="Enter" && setEditing(false)}
+            style={{ background:"transparent", border:"none", borderBottom:`1px solid ${color}66`,
+              outline:"none", color, fontSize:11, fontWeight:700, letterSpacing:"0.12em",
+              textTransform:"uppercase", width:"100%", fontFamily:"'DM Sans',sans-serif" }} />
+        ) : (
+          <div onClick={() => onName && setEditing(true)}
+            style={{ fontSize:11, letterSpacing:"0.15em", textTransform:"uppercase", color,
+              fontWeight:700, cursor:onName?"text":"default", display:"flex", alignItems:"center", gap:4 }}>
+            {displayName}
+            {onName && <span style={{ fontSize:9, opacity:0.4 }}>✎</span>}
+          </div>
+        )}
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+        <NumInput label="THC" value={thc} onChange={onTHC} />
+        <NumInput label="CBD" value={cbd} onChange={onCBD} />
+      </div>
+    </div>
+  );
+}
+
+function Toggle({ value, onChange, opts, colors }) {
+  return (
+    <div style={{ display:"flex", gap:4, background:"#131a0d", border:"1px solid #2a3a1a", borderRadius:8, padding:4 }}>
+      {opts.map((opt,i) => (
+        <button key={opt} onClick={() => onChange(opt)} style={{
+          flex:1, padding:"8px 0", borderRadius:6, border:"none", cursor:"pointer",
+          fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:700,
+          background: value===opt ? (colors?.[i]||"#8fba3a") : "transparent",
+          color: value===opt ? "#0d1408" : "#5a7040", transition:"all 0.2s"
+        }}>{opt}</button>
+      ))}
+    </div>
+  );
+}
+
+// ── Modal informe ─────────────────────────────────────────────────────────────
+
+const DISCLAIMER_TEXT = [
+  "Antes de generar el informe, tenga en cuenta que esta herramienta realiza únicamente cálculos teóricos de mezcla a partir de los datos ingresados por el usuario. Los resultados son orientativos y no constituyen una prescripción médica ni una recomendación terapéutica.",
+  "La exactitud de los resultados depende de la información proporcionada por el usuario. La aplicación no verifica la composición, concentración ni calidad de los aceites utilizados.",
+  "Esta herramienta está destinada exclusivamente a personas mayores de 18 años. La preparación y el uso de derivados de cannabis medicinal deben realizarse conforme a la normativa vigente y bajo supervisión profesional.",
+  "Al continuar, usted declara ser mayor de 18 años y haber leído y comprendido este aviso."
+];
+
+function ReportModal({ onClose, pdfDataArgs }) {
+  const [step, setStep] = useState("disclaimer"); // disclaimer | form
+  const [email, setEmail] = useState("");
+  const [status, setStatus] = useState("idle"); // idle | generating | sending | done | error
+  const [errMsg, setErrMsg] = useState("");
+
+  const isConfigured = EMAILJS_SERVICE_ID !== "TU_SERVICE_ID";
+
+  async function handleGenerate() {
+    if (!email.includes("@")) { setErrMsg("Ingresá un email válido."); return; }
+    setErrMsg("");
+    setStatus("generating");
+    try {
+      const pdfData = buildPDFData({ ...pdfDataArgs, userEmail: email });
+      const pdfDoc  = await generatePDF(pdfData);
+
+      // Siempre descargar localmente
+      pdfDoc.save(`informe-mezcla-${Date.now()}.pdf`);
+
+      if (isConfigured) {
+        setStatus("sending");
+        await sendReport({ userEmail: email, pdfDoc, pdfData });
+        await logToSheets(pdfData, email);
+      }
+      setStatus("done");
+    } catch (e) {
+      console.error(e);
+      setErrMsg("Error al generar. El PDF se descargó igual.");
+      setStatus("error");
+    }
+  }
+
+  const statusMsg = {
+    generating: "Generando PDF...",
+    sending:    "Enviando por email...",
+    done:       isConfigured ? "✓ PDF enviado y descargado" : "✓ PDF descargado",
+    error:      errMsg || "Algo falló.",
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:1000,
+      display:"flex", alignItems:"center", justifyContent:"center", padding:16 }}
+      onClick={e => e.target===e.currentTarget && onClose()}>
+      <div style={{ background:"#131a0d", border:"1px solid #4a7a20", borderRadius:16,
+        padding:28, width:"100%", maxWidth:400, position:"relative" }}>
+
+        {/* Header */}
+        <div style={{ position:"absolute", top:0, left:0, right:0, height:3, borderRadius:"16px 16px 0 0",
+          background:"linear-gradient(90deg,#8fba3a,#3a9a7a)" }} />
+        <button onClick={onClose} style={{ position:"absolute", top:12, right:14,
+          background:"none", border:"none", color:"#5a7040", fontSize:18, cursor:"pointer" }}>✕</button>
+
+        <div style={{ fontSize:10, letterSpacing:"0.2em", textTransform:"uppercase",
+          color:"#5a8030", marginBottom:6 }}>Informe PDF</div>
+        <div style={{ fontSize:18, fontWeight:700, color:"#a8c870", marginBottom:20 }}>
+          {step === "disclaimer" ? "Aviso importante" : "Generar y enviar"}
+        </div>
+
+        {step === "disclaimer" ? (
+          <>
+            <div style={{ marginBottom:20 }}>
+              {DISCLAIMER_TEXT.map((p, i) => (
+                <p key={i} style={{
+                  fontSize: i === DISCLAIMER_TEXT.length-1 ? 12 : 12,
+                  color: i === DISCLAIMER_TEXT.length-1 ? "#a8c870" : "#8aaa70",
+                  lineHeight: 1.65,
+                  marginBottom: i === DISCLAIMER_TEXT.length-1 ? 0 : 12,
+                  fontWeight: i === DISCLAIMER_TEXT.length-1 ? 600 : 400,
+                  fontStyle: i === DISCLAIMER_TEXT.length-1 ? "italic" : "normal",
+                  margin: `0 0 ${i === DISCLAIMER_TEXT.length-1 ? 0 : 12}px 0`,
+                }}>{p}</p>
+              ))}
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+              <button onClick={onClose} style={{
+                padding:"12px 0", background:"transparent",
+                border:"1px solid #3a4a2a", borderRadius:8, color:"#5a7040",
+                fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+                Cancelar
+              </button>
+              <button onClick={() => setStep("form")} style={{
+                padding:"12px 0", background:"linear-gradient(135deg,#4a7a1a,#2a6a3a)",
+                border:"none", borderRadius:8, color:"#f0f8e0",
+                fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+                Entendido →
+              </button>
+            </div>
+          </>
+        ) : status === "idle" || status === "error" ? (
+          <>
+            <div style={{ marginBottom:14 }}>
+              <label style={{ fontSize:11, letterSpacing:"0.08em", textTransform:"uppercase",
+                color:"#7a8a6a", fontWeight:600, display:"block", marginBottom:6 }}>
+                Email del destinatario
+              </label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                placeholder="nombre@mail.com"
+                style={{ width:"100%", background:"#1a2010", border:"1px solid #3a4a2a",
+                  borderRadius:6, padding:"10px 14px", color:"#d4e8b0", fontSize:15,
+                  fontFamily:"'DM Mono',monospace", outline:"none" }} />
+            </div>
+
+            {!isConfigured && (
+              <div style={{ background:"#1a2a0a", border:"1px solid #3a5010",
+                borderRadius:8, padding:"10px 14px", marginBottom:14, fontSize:12, color:"#8aaa50" }}>
+                ⚠ EmailJS no configurado aún. El PDF se descargará localmente.
+              </div>
+            )}
+
+            {errMsg && (
+              <div style={{ color:"#c06060", fontSize:12, marginBottom:10 }}>{errMsg}</div>
+            )}
+
+            <button onClick={handleGenerate} style={{
+              width:"100%", padding:"13px 0", background:"linear-gradient(135deg,#6a9a2a,#3a8a5a)",
+              border:"none", borderRadius:8, color:"#f0f8e0", fontSize:15, fontWeight:700,
+              cursor:"pointer", fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.02em" }}>
+              {isConfigured ? "Generar PDF y enviar" : "Descargar PDF"}
+            </button>
+          </>
+        ) : (
+          <div style={{ textAlign:"center", padding:"24px 0" }}>
+            {status !== "done" && (
+              <div style={{ fontSize:28, marginBottom:12,
+                animation:"spin 1s linear infinite" }}>⟳</div>
+            )}
+            {status === "done" && <div style={{ fontSize:32, marginBottom:12 }}>✓</div>}
+            <div style={{ fontSize:14, color: status==="done" ? "#8fba3a" : "#a8c870",
+              lineHeight:1.6 }}>{statusMsg[status]}</div>
+            {status === "done" && (
+              <button onClick={onClose} style={{ marginTop:18, padding:"10px 28px",
+                background:"#2a3a1a", border:"1px solid #4a6a20", borderRadius:8,
+                color:"#a8c870", cursor:"pointer", fontSize:14 }}>Cerrar</button>
+            )}
+          </div>
+        )}
+      </div>
+      <style>{`@keyframes spin { to { transform:rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+// ── Quimiotipo helpers ────────────────────────────────────────────────────────
+
+// Para cada quimiotipo, barre los 101 puntos de la mezcla y elige el mejor
+function bestPctForChemotype(type, thc1, cbd1, thc2, cbd2) {
+  let bestPct = 50, bestScore = -Infinity;
+  for (let p = 0; p <= 100; p++) {
+    const { thc, cbd } = blend(thc1, cbd1, thc2, cbd2, p);
+    let score;
+    if (type === "QT1") score = thc - cbd;               // maximizar THC sobre CBD
+    if (type === "QT2") score = -(Math.abs(thc - cbd));  // minimizar diferencia THC/CBD
+    if (type === "QT3") score = cbd - thc;               // maximizar CBD sobre THC
+    if (score > bestScore) { bestScore = score; bestPct = p; }
+  }
+  return bestPct;
+}
+
+const CHEMOTYPES = [
+  { id:"QT1", label:"Q. Tipo I",  sub:"THC alto",  color:"#c47a2a", bg:"#2a1a08", border:"#7a4010" },
+  { id:"QT2", label:"Q. Tipo II", sub:"Balanceado", color:"#8fba3a", bg:"#0e1a08", border:"#4a7a20" },
+  { id:"QT3", label:"Q. Tipo III",sub:"CBD alto",   color:"#3a9a7a", bg:"#081a14", border:"#1a6a4a" },
+];
+
+function ChemotypeButtons({ thc1, cbd1, thc2, cbd2, onSelect }) {
+  return (
+    <div style={{ marginTop:14 }}>
+      <div style={{ fontSize:10, letterSpacing:"0.12em", textTransform:"uppercase",
+        color:"#3a5030", marginBottom:7, fontWeight:600 }}>Ir a quimiotipo →</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6 }}>
+        {CHEMOTYPES.map(({ id, label, sub, color, bg, border }) => {
+          const pct = bestPctForChemotype(id, thc1, cbd1, thc2, cbd2);
+          const { thc, cbd } = blend(thc1, cbd1, thc2, cbd2, pct);
+          return (
+            <button key={id} onClick={() => onSelect(pct)}
+              style={{ background:bg, border:`1px solid ${border}`, borderRadius:7,
+                padding:"8px 4px", cursor:"pointer", textAlign:"center",
+                transition:"border-color 0.15s", fontFamily:"'DM Sans',sans-serif" }}>
+              <div style={{ fontSize:10, fontWeight:700, color, marginBottom:1 }}>{sub}</div>
+              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace",
+                color:"#607850", lineHeight:1.6 }}>
+                {thc}% · {cbd}%
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Quimiotipo shortcuts para 3 aceites ──────────────────────────────────────
+
+function ChemotypeButtons3({ oils, onSelect }) {
+  // For each chemotype, find the point inside the triangle that best fits
+  // by sampling a grid of (f1,f2,f3) combinations where f1+f2+f3=1
+  function bestFor(type) {
+    let bestScore = -Infinity, bestTHC = 0, bestCBD = 0;
+    const steps = 20;
+    for (let i = 0; i <= steps; i++) {
+      for (let j = 0; j <= steps - i; j++) {
+        const f1 = i/steps, f2 = j/steps, f3 = 1 - f1 - f2;
+        if (f3 < 0) continue;
+        const thc = oils[0].thc*f1 + oils[1].thc*f2 + oils[2].thc*f3;
+        const cbd = oils[0].cbd*f1 + oils[1].cbd*f2 + oils[2].cbd*f3;
+        let score;
+        if (type === "QT1") score = thc - cbd;
+        if (type === "QT2") score = -(Math.abs(thc - cbd));
+        if (type === "QT3") score = cbd - thc;
+        if (score > bestScore) { bestScore = score; bestTHC = +thc.toFixed(2); bestCBD = +cbd.toFixed(2); }
+      }
+    }
+    return { targetTHC: bestTHC, targetCBD: bestCBD };
+  }
+
+  const chemotypes = [
+    { id:"QT1", sub:"THC alto",   color:"#c47a2a", bg:"#2a1a08", border:"#7a4010" },
+    { id:"QT2", sub:"Balanceado", color:"#8fba3a", bg:"#0e1a08", border:"#4a7a20" },
+    { id:"QT3", sub:"CBD alto",   color:"#3a9a7a", bg:"#081a14", border:"#1a6a4a" },
+  ];
+
+  return (
+    <div style={{ marginBottom:14 }}>
+      <div style={{ fontSize:10, letterSpacing:"0.12em", textTransform:"uppercase",
+        color:"#3a5030", marginBottom:7, fontWeight:600 }}>Ir a quimiotipo →</div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6 }}>
+        {chemotypes.map(({ id, sub, color, bg, border }) => {
+          const { targetTHC, targetCBD } = bestFor(id);
+          return (
+            <button key={id} onClick={() => onSelect({ targetTHC, targetCBD })}
+              style={{ background:bg, border:`1px solid ${border}`, borderRadius:7,
+                padding:"8px 4px", cursor:"pointer", textAlign:"center",
+                fontFamily:"'DM Sans',sans-serif" }}>
+              <div style={{ fontSize:10, fontWeight:700, color, marginBottom:1 }}>{sub}</div>
+              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#607850", lineHeight:1.6 }}>
+                {targetTHC}% · {targetCBD}%
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Slider rango ──────────────────────────────────────────────────────────────
+
+function RangeSlider({ pct1, onChange, thc1, cbd1, thc2, cbd2 }) {
+  const { thc, cbd } = blend(thc1, cbd1, thc2, cbd2, pct1);
+  const pct2 = 100 - pct1;
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6,
+        fontSize:11, fontFamily:"'DM Mono',monospace", color:"#5a7040" }}>
+        <span style={{color:"#8fba3a"}}>100% A1</span>
+        <span style={{color:"#6a9a50"}}>50 · 50</span>
+        <span style={{color:"#3a9a7a"}}>100% A2</span>
+      </div>
+      <style>{`
+        .blend-slider{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:3px;
+          background:linear-gradient(90deg,#8fba3a 0%,#5a9a5a 50%,#3a9a7a 100%);outline:none;cursor:pointer;}
+        .blend-slider::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;
+          background:#d4e8b0;border:3px solid #0a0f06;box-shadow:0 0 0 2px #8fba3a88;cursor:pointer;}
+        .blend-slider::-moz-range-thumb{width:22px;height:22px;border-radius:50%;
+          background:#d4e8b0;border:3px solid #0a0f06;cursor:pointer;}
+      `}</style>
+      <input type="range" min={0} max={100} step={1} value={100 - pct1}
+        onChange={e => onChange(100 - +e.target.value)} className="blend-slider" />
+      <div style={{ display:"flex", justifyContent:"space-between", marginTop:10, gap:8 }}>
+        {[{label:"Aceite 1",val:pct1,color:"#8fba3a"},{label:"Aceite 2",val:pct2,color:"#3a9a7a"}].map(({label,val,color})=>(
+          <div key={label} style={{ flex:1, background:"#131a0d", border:`1px solid ${color}33`,
+            borderRadius:8, padding:"10px 12px", textAlign:"center" }}>
+            <div style={{ fontSize:10, color, letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:4 }}>{label}</div>
+            <div style={{ fontSize:26, fontWeight:700, color, fontFamily:"'DM Mono',monospace" }}>{val}<span style={{fontSize:14}}>%</span></div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:8 }}>
+        {[{label:"THC",val:thc,color:"#a8c870"},{label:"CBD",val:cbd,color:"#60b89a"}].map(({label,val,color})=>(
+          <div key={label} style={{ background:"#0e1a09", border:"1px solid #2a3a1a",
+            borderRadius:8, padding:"12px 14px", display:"flex",
+            justifyContent:"space-between", alignItems:"center" }}>
+            <span style={{ fontSize:12, color:"#6a8a50", fontWeight:600 }}>{label}</span>
+            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:700, color }}>{val}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function VolumeResult({ pct1, thc1, cbd1, thc2, cbd2 }) {
+  const [vol, setVol] = useState(100);
+  const ml1 = +(vol * pct1 / 100).toFixed(1);
+  const ml2 = +(vol * (100-pct1) / 100).toFixed(1);
+  const { thc, cbd } = blend(thc1, cbd1, thc2, cbd2, pct1);
+  return (
+    <div style={{ background:"#0e1a09", border:"1px solid #2a3a1a", borderRadius:10, padding:16, marginTop:12 }}>
+      <div style={{ fontSize:10, letterSpacing:"0.15em", textTransform:"uppercase",
+        color:"#7a8a6a", marginBottom:12, fontWeight:600 }}>Volumen final</div>
+      <NumInput label="Cantidad total" value={vol} onChange={setVol} unit="ml" min={1} max={50000} step="1" />
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:12 }}>
+        {[{label:"Aceite 1",val:ml1,color:"#8fba3a"},{label:"Aceite 2",val:ml2,color:"#3a9a7a"}].map(({label,val,color})=>(
+          <div key={label} style={{ background:"#0a1206", borderRadius:8, padding:"12px 14px",
+            textAlign:"center", border:`1px solid ${color}22` }}>
+            <div style={{ fontSize:10, color:"#5a7040", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:4 }}>{label}</div>
+            <div style={{ fontSize:28, fontWeight:700, color, fontFamily:"'DM Mono',monospace" }}>{val}</div>
+            <div style={{ fontSize:12, color:"#4a6030" }}>ml</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop:10, background:"#0a0f06", borderRadius:8, padding:"8px 14px",
+        display:"flex", justifyContent:"space-around" }}>
+        <span style={{ fontSize:12, color:"#5a7040" }}>THC <strong style={{color:"#a8c870",fontFamily:"'DM Mono',monospace"}}>{thc}%</strong></span>
+        <span style={{ fontSize:12, color:"#5a7040" }}>CBD <strong style={{color:"#60b89a",fontFamily:"'DM Mono',monospace"}}>{cbd}%</strong></span>
+        <span style={{ fontSize:12, color:"#5a7040" }}>Total <strong style={{color:"#c8dca0",fontFamily:"'DM Mono',monospace"}}>{vol} ml</strong></span>
+      </div>
+    </div>
+  );
+}
+
+// ── Calc tab ──────────────────────────────────────────────────────────────────
+
+function CalcTab({ thc1, cbd1, thc2, cbd2 }) {
+  const [volume, setVolume] = useState(100);
+  const [targetTHC, setTargetTHC] = useState(12);
+  const [targetCBD, setTargetCBD] = useState(5);
+  const [fixedCann, setFixedCann] = useState("THC");
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    setResult(solve({ thc1,cbd1,thc2,cbd2,volume,targetTHC,targetCBD,fixedCannabinoide:fixedCann }));
+  }, [thc1,cbd1,thc2,cbd2,volume,targetTHC,targetCBD,fixedCann]);
+
+  const ratio = result?.feasible ? (result.x / volume * 100) : 50;
+  return (
+    <>
+      <div style={{ background:"#131a0d", border:"1px solid #2a3a1a", borderRadius:12, padding:20, marginBottom:14 }}>
+        <div style={{ fontSize:10, letterSpacing:"0.15em", textTransform:"uppercase", color:"#7a8a6a", marginBottom:16, fontWeight:600 }}>Parámetros</div>
+        <div style={{ display:"grid", gap:14 }}>
+          <NumInput label="Volumen final" value={volume} onChange={setVolume} unit="ml" min={1} max={50000} step="1" />
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <label style={{ fontSize:11, letterSpacing:"0.08em", textTransform:"uppercase", color:"#7a8a6a", fontWeight:600 }}>Fijar</label>
+            <Toggle value={fixedCann} onChange={setFixedCann} opts={["THC","CBD"]} colors={["#8fba3a","#3a9a7a"]} />
+          </div>
+          {fixedCann==="THC"
+            ? <NumInput label="THC objetivo" value={targetTHC} onChange={setTargetTHC} />
+            : <NumInput label="CBD objetivo" value={targetCBD} onChange={setTargetCBD} />}
+        </div>
+      </div>
+
+      <div style={{ background:result?.feasible?"#0e1a09":"#1a0e0e",
+        border:`1px solid ${result?.feasible?"#4a7a20":"#7a2020"}`,
+        borderRadius:12, padding:22, position:"relative", overflow:"hidden" }}>
+        <div style={{ position:"absolute", top:0, left:0, right:0, height:3,
+          background:result?.feasible?"linear-gradient(90deg,#8fba3a,#3a9a7a)":"linear-gradient(90deg,#c04040,#803030)" }} />
+
+        {result?.feasible ? (
+          <>
+            <div style={{ fontSize:10, letterSpacing:"0.15em", textTransform:"uppercase", color:"#4a7a20", marginBottom:18, fontWeight:700 }}>Resultado</div>
+            <div style={{ marginBottom:18 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6, fontSize:11, color:"#5a7040" }}>
+                <span>Aceite 1</span><span>Aceite 2</span>
+              </div>
+              <div style={{ height:10, borderRadius:5, background:"#1a2a10", overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${ratio}%`, background:"linear-gradient(90deg,#8fba3a,#6a9a20)", transition:"width 0.4s", borderRadius:5 }} />
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", marginTop:5, fontSize:11, color:"#5a7040" }}>
+                <span>{ratio.toFixed(1)}%</span><span>{(100-ratio).toFixed(1)}%</span>
+              </div>
+            </div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+              {[{label:"Aceite 1",val:result.x,color:"#8fba3a"},{label:"Aceite 2",val:result.y,color:"#3a9a7a"}].map(({label,val,color})=>(
+                <div key={label} style={{ background:"#0a1206", borderRadius:8, padding:14, textAlign:"center", border:`1px solid ${color}22` }}>
+                  <div style={{ fontSize:10, color:"#5a7040", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:4 }}>{label}</div>
+                  <div style={{ fontSize:28, fontWeight:700, color, fontFamily:"'DM Mono',monospace" }}>{val}</div>
+                  <div style={{ fontSize:12, color:"#4a6030" }}>ml</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ background:"#0a1206", borderRadius:8, padding:14 }}>
+              <div style={{ fontSize:10, letterSpacing:"0.1em", textTransform:"uppercase", color:"#4a6030", marginBottom:10 }}>Concentración resultante</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                {[{label:"THC",val:result.resultTHC,fixed:fixedCann==="THC"},{label:"CBD",val:result.resultCBD,fixed:fixedCann==="CBD"}].map(({label,val,fixed})=>(
+                  <div key={label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span style={{ fontSize:13, color:"#7a9a50", fontWeight:600 }}>{label}</span>
+                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:20, fontWeight:700, color:fixed?"#a8c870":"#5a9a7a" }}>{val}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div style={{ textAlign:"center", padding:"12px 0" }}>
+            <div style={{ fontSize:26, marginBottom:10 }}>⚠</div>
+            <div style={{ color:"#c06060", fontSize:14, lineHeight:1.6 }}>{result?.warning}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Botón informe en calc */}
+      {result?.feasible && (
+        <CalcReportButton thc1={thc1} cbd1={cbd1} thc2={thc2} cbd2={cbd2}
+          calcResult={result} calcVolume={volume} fixedCann={fixedCann}
+          targetTHC={targetTHC} targetCBD={targetCBD} />
+      )}
+    </>
+  );
+}
+
+function CalcReportButton({ thc1, cbd1, thc2, cbd2, calcResult, calcVolume, fixedCann, targetTHC, targetCBD }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button onClick={() => setOpen(true)} style={{
+        width:"100%", marginTop:12, padding:"13px 0",
+        background:"linear-gradient(135deg,#2a4a10,#1a3a28)",
+        border:"1px solid #4a7a20", borderRadius:10, color:"#a8c870",
+        fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif",
+        letterSpacing:"0.05em" }}>
+        ↓ Generar informe PDF
+      </button>
+      {open && (
+        <ReportModal onClose={() => setOpen(false)} pdfDataArgs={{
+          thc1, cbd1, thc2, cbd2, mode:"calc",
+          sliderPct1:50, sliderVol:100,
+          calcResult, calcVolume, fixedCann, targetTHC, targetCBD
+        }} />
+      )}
+    </>
+  );
+}
+
+
+// ── Canvas: triángulo interactivo con touch/drag ──────────────────────────────
+
+function TriangleChart({ oils, result, onTouch }) {
+  const canvasRef = useRef(null);
+  const PAD = {top:16,right:14,bottom:34,left:36};
+
+  function getAxes(W, H) {
+    const thcVals = oils.map(o=>o.thc), cbdVals = oils.map(o=>o.cbd);
+    const thcMin = Math.max(0, Math.min(...thcVals)-3), thcMax = Math.min(100, Math.max(...thcVals)+3);
+    const cbdMin = Math.max(0, Math.min(...cbdVals)-3), cbdMax = Math.min(100, Math.max(...cbdVals)+3);
+    const pw = W-PAD.left-PAD.right, ph = H-PAD.top-PAD.bottom;
+    const tx = v => PAD.left + (v-thcMin)/(thcMax-thcMin)*pw;
+    const ty = v => PAD.top + ph - (v-cbdMin)/(cbdMax-cbdMin)*ph;
+    // inverse: canvas px → data value
+    const ix = px => thcMin + (px-PAD.left)/pw*(thcMax-thcMin);
+    const iy = py => cbdMin + (PAD.top+ph-py)/ph*(cbdMax-cbdMin);
+    return { tx, ty, ix, iy, thcMin, thcMax, cbdMin, cbdMax, pw, ph };
+  }
+
+  function drawChart(canvas, result) {
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    if (canvas.width !== W*dpr) { canvas.width = W*dpr; canvas.height = H*dpr; }
+    const ctx = canvas.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0);
+    const { tx, ty, thcMin, thcMax, cbdMin, cbdMax, ph } = getAxes(W,H);
+
+    ctx.fillStyle="#0a0f06"; ctx.fillRect(0,0,W,H);
+
+    // grid
+    ctx.strokeStyle="#1a2a10"; ctx.lineWidth=1;
+    const thcR=thcMax-thcMin, cbdR=cbdMax-cbdMin;
+    const tStep=thcR<=6?1:thcR<=15?2:5, cStep=cbdR<=6?1:cbdR<=15?2:5;
+    for(let v=Math.ceil(thcMin);v<=thcMax;v+=tStep){ctx.beginPath();ctx.moveTo(tx(v),PAD.top);ctx.lineTo(tx(v),PAD.top+ph);ctx.stroke();}
+    for(let v=Math.ceil(cbdMin);v<=cbdMax;v+=cStep){ctx.beginPath();ctx.moveTo(PAD.left,ty(v));ctx.lineTo(PAD.left+(W-PAD.left-PAD.right),ty(v));ctx.stroke();}
+
+    // axis labels
+    ctx.fillStyle="#5a7040"; ctx.font="10px 'DM Mono',monospace"; ctx.textAlign="center";
+    for(let v=Math.ceil(thcMin);v<=thcMax;v+=tStep) ctx.fillText(v+"%",tx(v),H-PAD.bottom+14);
+    ctx.textAlign="right";
+    for(let v=Math.ceil(cbdMin);v<=cbdMax;v+=cStep) ctx.fillText(v+"%",PAD.left-4,ty(v)+4);
+    ctx.fillStyle="#4a6030"; ctx.textAlign="center";
+    ctx.fillText("THC %",PAD.left+(W-PAD.left-PAD.right)/2,H-4);
+    ctx.save(); ctx.translate(11,PAD.top+ph/2); ctx.rotate(-Math.PI/2); ctx.fillText("CBD %",0,0); ctx.restore();
+
+    // triangle fill + border
+    const colors=["#8fba3a","#3a9a7a","#e8a030"];
+    ctx.beginPath();
+    ctx.moveTo(tx(oils[0].thc),ty(oils[0].cbd));
+    ctx.lineTo(tx(oils[1].thc),ty(oils[1].cbd));
+    ctx.lineTo(tx(oils[2].thc),ty(oils[2].cbd));
+    ctx.closePath();
+    ctx.fillStyle="#4a7a2022"; ctx.fill();
+    ctx.strokeStyle="#5a9a4099"; ctx.lineWidth=1.5; ctx.stroke();
+
+    // vertices
+    oils.forEach((o,i)=>{
+      ctx.beginPath(); ctx.arc(tx(o.thc),ty(o.cbd),7,0,Math.PI*2);
+      ctx.fillStyle="#0a0f06"; ctx.fill();
+      ctx.strokeStyle=colors[i]; ctx.lineWidth=2.5; ctx.stroke();
+      ctx.fillStyle=colors[i]; ctx.font="bold 11px 'DM Sans',sans-serif";
+      ctx.textAlign=tx(o.thc)>PAD.left+(W-PAD.left-PAD.right)/2?"right":"left";
+      ctx.fillText("A"+(i+1), tx(o.thc)+(tx(o.thc)>PAD.left+(W-PAD.left-PAD.right)/2?-12:12), ty(o.cbd)-9);
+    });
+
+    // pin
+    if(result?.feasible){
+      const rx=tx(result.resultTHC), ry=ty(result.resultCBD);
+      ctx.strokeStyle="#f0d06066"; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+      ctx.beginPath(); ctx.moveTo(rx,PAD.top); ctx.lineTo(rx,PAD.top+ph); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(PAD.left,ry); ctx.lineTo(PAD.left+(W-PAD.left-PAD.right),ry); ctx.stroke();
+      ctx.setLineDash([]);
+      // pin shadow
+      ctx.beginPath(); ctx.arc(rx,ry,9,0,Math.PI*2);
+      ctx.fillStyle="#f0d06033"; ctx.fill();
+      ctx.beginPath(); ctx.arc(rx,ry,6,0,Math.PI*2);
+      ctx.fillStyle="#f0d060"; ctx.fill();
+      ctx.strokeStyle="#0a0f06"; ctx.lineWidth=2; ctx.stroke();
+    } else if (onTouch) {
+      // hint: tap anywhere inside
+      ctx.fillStyle="#3a5a2066"; ctx.font="11px 'DM Sans',sans-serif"; ctx.textAlign="center";
+      ctx.fillText("Tocá dentro del triángulo", PAD.left+(W-PAD.left-PAD.right)/2, PAD.top+ph/2);
+    }
+  }
+
+  useEffect(() => {
+    drawChart(canvasRef.current, result);
+  }, [oils, result]);
+
+  function handleInteraction(clientX, clientY) {
+    if (!onTouch) return;
+    const canvas = canvasRef.current; if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = clientX - rect.left, py = clientY - rect.top;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    const { ix, iy } = getAxes(W, H);
+    const thc = +ix(px).toFixed(2), cbd = +iy(py).toFixed(2);
+    onTouch(thc, cbd);
+  }
+
+  return (
+    <div style={{position:"relative"}}>
+      <canvas ref={canvasRef}
+        style={{width:"100%", height:240, borderRadius:8, display:"block", cursor: onTouch?"crosshair":"default", touchAction:"none"}}
+        onClick={e => handleInteraction(e.clientX, e.clientY)}
+        onMouseMove={e => { if(e.buttons===1) handleInteraction(e.clientX, e.clientY); }}
+        onTouchStart={e => { e.preventDefault(); handleInteraction(e.touches[0].clientX, e.touches[0].clientY); }}
+        onTouchMove={e => { e.preventDefault(); handleInteraction(e.touches[0].clientX, e.touches[0].clientY); }}
+      />
+      {onTouch && (
+        <div style={{position:"absolute",bottom:6,right:8,fontSize:9,color:"#2a4a20",
+          fontFamily:"'DM Mono',monospace",pointerEvents:"none"}}>
+          toque / arrastre
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tab 3 aceites ─────────────────────────────────────────────────────────────
+
+function ThreeOilTab() {
+  const [oils, setOils] = useState([
+    {thc:17, cbd:0.3},
+    {thc:3,  cbd:10},
+    {thc:1,  cbd:18},
+  ]);
+  const [volume, setVolume] = useState(100);
+  const [targetTHC, setTHC] = useState(8);
+  const [targetCBD, setCBD] = useState(8);
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    setResult(solve3({ oils, volume, targetTHC, targetCBD }));
+  }, [oils, volume, targetTHC, targetCBD]);
+
+  function updateOil(i, field, val) {
+    const next = oils.map((o,idx) => idx===i ? {...o,[field]:val} : o);
+    setOils(next);
+  }
+
+  const oilColors = ["#8fba3a","#3a9a7a","#e8a030"];
+
+  return (
+    <div>
+      {/* 3 oil cards */}
+      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:14}}>
+        {oils.map((o,i)=>(
+          <div key={i} style={{background:"#131a0d", border:`1px solid ${oilColors[i]}44`,
+            borderRadius:10, padding:12, position:"relative", overflow:"hidden"}}>
+            <div style={{position:"absolute",top:0,left:0,right:0,height:3,
+              background:`linear-gradient(90deg,${oilColors[i]},transparent)`}}/>
+            <div style={{fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",
+              color:oilColors[i],marginBottom:10,fontWeight:700}}>A{i+1}</div>
+            <div style={{display:"grid",gap:8}}>
+              <NumInput label="THC" value={o.thc} onChange={v=>updateOil(i,"thc",v)} />
+              <NumInput label="CBD" value={o.cbd} onChange={v=>updateOil(i,"cbd",v)} />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Triangle chart */}
+      <div style={{background:"#131a0d",border:"1px solid #2a3a1a",borderRadius:12,padding:14,marginBottom:14}}>
+        <div style={{fontSize:10,letterSpacing:"0.15em",textTransform:"uppercase",
+          color:"#7a8a6a",marginBottom:10,fontWeight:600}}>Espacio alcanzable</div>
+        <TriangleChart oils={oils} result={result} targetTHC={targetTHC} targetCBD={targetCBD}/>
+        <div style={{fontSize:11,color:"#3a5030",marginTop:8,textAlign:"center"}}>
+          Todo punto dentro del triángulo es alcanzable con estos 3 aceites
+        </div>
+      </div>
+
+      {/* Target inputs */}
+      <div style={{background:"#131a0d",border:"1px solid #2a3a1a",borderRadius:12,padding:16,marginBottom:14}}>
+        <div style={{fontSize:10,letterSpacing:"0.15em",textTransform:"uppercase",
+          color:"#7a8a6a",marginBottom:14,fontWeight:600}}>Target</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+          <NumInput label="THC objetivo" value={targetTHC} onChange={setTHC}/>
+          <NumInput label="CBD objetivo" value={targetCBD} onChange={setCBD}/>
+        </div>
+        <NumInput label="Volumen final" value={volume} onChange={setVolume} unit="ml" min={1} max={50000} step="1"/>
+      </div>
+
+      {/* Result */}
+      <div style={{background:result?.feasible?"#0e1a09":"#1a0e0e",
+        border:`1px solid ${result?.feasible?"#4a7a20":"#7a2020"}`,
+        borderRadius:12,padding:20,position:"relative",overflow:"hidden"}}>
+        <div style={{position:"absolute",top:0,left:0,right:0,height:3,
+          background:result?.feasible
+            ?"linear-gradient(90deg,#8fba3a,#3a9a7a,#e8a030)"
+            :"linear-gradient(90deg,#c04040,#803030)"}}/>
+
+        {result?.feasible ? (
+          <>
+            <div style={{fontSize:10,letterSpacing:"0.15em",textTransform:"uppercase",
+              color:"#4a7a20",marginBottom:16,fontWeight:700}}>Resultado</div>
+
+            {/* Proportion bar */}
+            <div style={{marginBottom:16}}>
+              <div style={{display:"flex",height:12,borderRadius:6,overflow:"hidden",gap:1}}>
+                {[
+                  {pct:result.pct1,color:"#8fba3a"},
+                  {pct:result.pct2,color:"#3a9a7a"},
+                  {pct:result.pct3,color:"#e8a030"},
+                ].map(({pct,color},i)=>(
+                  <div key={i} style={{width:`${pct}%`,background:color,transition:"width 0.4s",minWidth:pct>0?2:0}}/>
+                ))}
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:10,color:"#5a7040",fontFamily:"'DM Mono',monospace"}}>
+                <span style={{color:"#8fba3a"}}>A1 {result.pct1}%</span>
+                <span style={{color:"#3a9a7a"}}>A2 {result.pct2}%</span>
+                <span style={{color:"#e8a030"}}>A3 {result.pct3}%</span>
+              </div>
+            </div>
+
+            {/* ml cards */}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
+              {[
+                {label:"Aceite 1",val:result.ml1,color:"#8fba3a"},
+                {label:"Aceite 2",val:result.ml2,color:"#3a9a7a"},
+                {label:"Aceite 3",val:result.ml3,color:"#e8a030"},
+              ].map(({label,val,color})=>(
+                <div key={label} style={{background:"#0a1206",borderRadius:8,padding:"10px 8px",
+                  textAlign:"center",border:`1px solid ${color}22`}}>
+                  <div style={{fontSize:9,color:"#5a7040",letterSpacing:"0.08em",
+                    textTransform:"uppercase",marginBottom:4}}>{label}</div>
+                  <div style={{fontSize:22,fontWeight:700,color,fontFamily:"'DM Mono',monospace"}}>{val}</div>
+                  <div style={{fontSize:11,color:"#4a6030"}}>ml</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Cannabinoids result */}
+            <div style={{background:"#0a1206",borderRadius:8,padding:12}}>
+              <div style={{fontSize:9,letterSpacing:"0.1em",textTransform:"uppercase",color:"#4a6030",marginBottom:8}}>Concentración resultante</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                {[{label:"THC",val:result.resultTHC,color:"#a8c870"},{label:"CBD",val:result.resultCBD,color:"#60b89a"}].map(({label,val,color})=>(
+                  <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <span style={{fontSize:12,color:"#7a9a50",fontWeight:600}}>{label}</span>
+                    <span style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:700,color}}>{val}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : (
+          <div style={{textAlign:"center",padding:"12px 0"}}>
+            <div style={{fontSize:26,marginBottom:10}}>⚠</div>
+            <div style={{color:"#c06060",fontSize:13,lineHeight:1.6}}>{result?.warning}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ThreeOilReportButton({ oils3, result3, vol3, target3THC, target3CBD }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button onClick={() => setOpen(true)} style={{
+        width:"100%", marginTop:12, padding:"13px 0",
+        background:"linear-gradient(135deg,#2a4a10,#1a3a28)",
+        border:"1px solid #4a7a20", borderRadius:10, color:"#a8c870",
+        fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif",
+        letterSpacing:"0.05em" }}>
+        ↓ Generar informe PDF
+      </button>
+      {open && (
+        <ReportModal onClose={() => setOpen(false)} pdfDataArgs={{
+          thc1: oils3[0].thc, cbd1: oils3[0].cbd,
+          thc2: oils3[1].thc, cbd2: oils3[1].cbd,
+          mode:"calc", sliderPct1: result3.pct1, sliderVol: vol3,
+          calcResult:{ feasible:true, x:result3.ml1, y:result3.ml2,
+            resultTHC:result3.resultTHC, resultCBD:result3.resultCBD },
+          calcVolume:vol3, fixedCann:"THC",
+          targetTHC:target3THC, targetCBD:target3CBD,
+        }} />
+      )}
+    </>
+  );
+}
+
+// ── App root ──────────────────────────────────────────────────────────────────
+
+export default function App() {
+  // shared oil state
+  const [thc1, setThc1] = useState(0);
+  const [cbd1, setCbd1] = useState(0);
+  const [thc2, setThc2] = useState(0);
+  const [cbd2, setCbd2] = useState(0);
+  const [thc3, setThc3] = useState(0);
+  const [cbd3, setCbd3] = useState(0);
+  const [name1, setName1] = useState("Aceite 1");
+  const [name2, setName2] = useState("Aceite 2");
+  const [name3, setName3] = useState("Aceite 3");
+
+  const [oilMode, setOilMode] = useState(2);   // 2 or 3
+  const [tab, setTab]         = useState("rango");
+  const [pct1, setPct1]       = useState(50);
+  const [sliderVol, setSliderVol] = useState(100);
+  const [showRangeReport, setShowRangeReport] = useState(false);
+
+  // 3-oil calc state (lives here so it persists when toggling)
+  const [target3THC, setTarget3THC] = useState(8);
+  const [target3CBD, setTarget3CBD] = useState(8);
+  const [vol3, setVol3]             = useState(100);
+  const [result3, setResult3]       = useState(null);
+
+  const oils3 = [
+    {thc:thc1,cbd:cbd1},
+    {thc:thc2,cbd:cbd2},
+    {thc:thc3,cbd:cbd3},
+  ];
+
+  useEffect(() => {
+    if (oilMode === 3) {
+      setResult3(solve3({ oils: oils3, volume: vol3, targetTHC: target3THC, targetCBD: target3CBD }));
+    }
+  }, [thc1,cbd1,thc2,cbd2,thc3,cbd3,vol3,target3THC,target3CBD,oilMode]);
+
+  return (
+    <div style={{ minHeight:"100vh", background:"#0a0f06", fontFamily:"'DM Sans',sans-serif",
+      color:"#c8dca0", padding:"28px 16px" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
+        * { box-sizing:border-box; }
+        input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+        input[type=number]{-moz-appearance:textfield;}
+      `}</style>
+
+      <div style={{ maxWidth:500, margin:"0 auto" }}>
+
+        {/* Header */}
+        <div style={{ textAlign:"center", marginBottom:14 }}>
+          <div style={{ fontSize:10, letterSpacing:"0.2em", textTransform:"uppercase", color:"#4a6030", marginBottom:5 }}>Calculadora de formulación</div>
+          <h1 style={{ margin:0, fontSize:22, fontWeight:700, color:"#a8c870", letterSpacing:"-0.02em" }}>
+            Aceite de Cannabis Medicinal
+          </h1>
+          <div style={{ fontSize:12, color:"#4a7030", marginTop:3, fontFamily:"'DM Mono',monospace" }}>Blend</div>
+        </div>
+
+        {/* 2/3 toggle — between title and oil cards */}
+        <div style={{ display:"flex", gap:4, background:"#0e1408", border:"1px solid #2a3a1a",
+          borderRadius:8, padding:3, marginBottom:12, width:"fit-content" }}>
+          {[2,3].map(n => (
+            <button key={n} onClick={() => setOilMode(n)} style={{
+              padding:"5px 18px", borderRadius:5, border:"none", cursor:"pointer",
+              fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700,
+              background: oilMode===n ? (n===2?"#2a4a20":"#3a2008") : "transparent",
+              color: oilMode===n ? (n===2?"#a8c870":"#e8a030") : "#3a5030",
+              transition:"all 0.2s"
+            }}>{n} aceites</button>
+          ))}
+        </div>
+
+        {/* Oil cards */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom: oilMode===3 ? 8 : 10 }}>
+          <OilCard num="1" thc={thc1} cbd={cbd1} onTHC={setThc1} onCBD={setCbd1} color="#8fba3a" name={name1} onName={setName1} />
+          <OilCard num="2" thc={thc2} cbd={cbd2} onTHC={setThc2} onCBD={setCbd2} color="#3a9a7a" name={name2} onName={setName2} />
+        </div>
+        {oilMode === 3 && (
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+            <OilCard num="3" thc={thc3} cbd={cbd3} onTHC={setThc3} onCBD={setCbd3} color="#e8a030" name={name3} onName={setName3} />
+            <div style={{ background:"#0d1209", border:"1px dashed #2a3a1a", borderRadius:12,
+              display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <span style={{ fontSize:11, color:"#2a3a1a", fontFamily:"'DM Mono',monospace" }}>A3 cargado</span>
+            </div>
+          </div>
+        )}
+
+        {/* Main tabs — only rango+calc when 2 oils; only calc (target) when 3 oils */}
+        {oilMode === 2 && (
+          <>
+            <Toggle value={tab} onChange={setTab} opts={["rango","calc"]} colors={["#3a7a6a","#6a9a3a"]} />
+            <div style={{ height:14 }} />
+
+            {tab === "rango" && (
+              <div style={{ background:"#131a0d", border:"1px solid #2a3a1a", borderRadius:12, padding:20 }}>
+                <div style={{ fontSize:10, letterSpacing:"0.15em", textTransform:"uppercase",
+                  color:"#7a8a6a", marginBottom:18, fontWeight:600 }}>Explorar combinaciones</div>
+                <RangeSlider pct1={pct1} onChange={setPct1} thc1={thc1} cbd1={cbd1} thc2={thc2} cbd2={cbd2} />
+                <ChemotypeButtons thc1={thc1} cbd1={cbd1} thc2={thc2} cbd2={cbd2} onSelect={setPct1} />
+                <VolumeResult pct1={pct1} thc1={thc1} cbd1={cbd1} thc2={thc2} cbd2={cbd2} />
+                <button onClick={() => setShowRangeReport(true)} style={{
+                  width:"100%", marginTop:14, padding:"13px 0",
+                  background:"linear-gradient(135deg,#2a4a10,#1a3a28)",
+                  border:"1px solid #4a7a20", borderRadius:10, color:"#a8c870",
+                  fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'DM Sans',sans-serif",
+                  letterSpacing:"0.05em" }}>
+                  ↓ Generar informe PDF
+                </button>
+                {showRangeReport && (
+                  <ReportModal onClose={() => setShowRangeReport(false)} pdfDataArgs={{
+                    thc1, cbd1, thc2, cbd2, mode:"rango",
+                    sliderPct1:pct1, sliderVol,
+                    calcResult:null, calcVolume:100, fixedCann:"THC", targetTHC:0, targetCBD:0
+                  }} />
+                )}
+              </div>
+            )}
+
+            {tab === "calc" && (
+              <CalcTab thc1={thc1} cbd1={cbd1} thc2={thc2} cbd2={cbd2} />
+            )}
+          </>
+        )}
+
+        {/* 3-oil mode: triangle + target calc */}
+        {oilMode === 3 && (
+          <div>
+            {/* Triangle chart */}
+            <div style={{ background:"#131a0d", border:"1px solid #2a3a1a",
+              borderRadius:12, padding:16, marginBottom:14 }}>
+              <div style={{ fontSize:10, letterSpacing:"0.15em", textTransform:"uppercase",
+                color:"#7a8a6a", marginBottom:10, fontWeight:600 }}>Espacio alcanzable</div>
+              <TriangleChart oils={oils3} result={result3}
+                onTouch={(thc, cbd) => { setTarget3THC(+thc.toFixed(1)); setTarget3CBD(+cbd.toFixed(1)); }} />
+              <div style={{ fontSize:11, color:"#3a5030", marginTop:6, textAlign:"center" }}>
+                Tocá o arrastrá dentro del triángulo · o usá los campos abajo
+              </div>
+            </div>
+
+            {/* Chemotype shortcuts */}
+            <ChemotypeButtons3 oils={oils3} onSelect={({targetTHC, targetCBD}) => {
+              setTarget3THC(targetTHC); setTarget3CBD(targetCBD);
+            }} />
+
+            {/* Target inputs */}
+            <div style={{ background:"#131a0d", border:"1px solid #2a3a1a",
+              borderRadius:12, padding:16, marginBottom:14 }}>
+              <div style={{ fontSize:10, letterSpacing:"0.15em", textTransform:"uppercase",
+                color:"#7a8a6a", marginBottom:14, fontWeight:600 }}>Target exacto</div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
+                <NumInput label="THC objetivo" value={target3THC} onChange={setTarget3THC} />
+                <NumInput label="CBD objetivo" value={target3CBD} onChange={setTarget3CBD} />
+              </div>
+              <NumInput label="Volumen final" value={vol3} onChange={setVol3} unit="ml" min={1} max={50000} step="1" />
+            </div>
+
+            {/* Result */}
+            <div style={{ background:result3?.feasible?"#0e1a09":"#1a0e0e",
+              border:`1px solid ${result3?.feasible?"#4a7a20":"#7a2020"}`,
+              borderRadius:12, padding:20, position:"relative", overflow:"hidden" }}>
+              <div style={{ position:"absolute", top:0, left:0, right:0, height:3,
+                background:result3?.feasible
+                  ?"linear-gradient(90deg,#8fba3a,#3a9a7a,#e8a030)"
+                  :"linear-gradient(90deg,#c04040,#803030)" }} />
+
+              {result3?.feasible ? (
+                <>
+                  <div style={{ fontSize:10, letterSpacing:"0.15em", textTransform:"uppercase",
+                    color:"#4a7a20", marginBottom:16, fontWeight:700 }}>Resultado</div>
+
+                  {/* Proportion bar */}
+                  <div style={{ marginBottom:16 }}>
+                    <div style={{ display:"flex", height:10, borderRadius:5, overflow:"hidden" }}>
+                      {[{p:result3.pct1,c:"#8fba3a"},{p:result3.pct2,c:"#3a9a7a"},{p:result3.pct3,c:"#e8a030"}].map(({p,c},i)=>(
+                        <div key={i} style={{ width:`${p}%`, background:c, minWidth:p>0?2:0 }} />
+                      ))}
+                    </div>
+                    <div style={{ display:"flex", justifyContent:"space-between", marginTop:5,
+                      fontSize:10, fontFamily:"'DM Mono',monospace" }}>
+                      <span style={{color:"#8fba3a"}}>A1 {result3.pct1}%</span>
+                      <span style={{color:"#3a9a7a"}}>A2 {result3.pct2}%</span>
+                      <span style={{color:"#e8a030"}}>A3 {result3.pct3}%</span>
+                    </div>
+                  </div>
+
+                  {/* ml cards */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:14 }}>
+                    {[{l:"Aceite 1",v:result3.ml1,c:"#8fba3a"},{l:"Aceite 2",v:result3.ml2,c:"#3a9a7a"},{l:"Aceite 3",v:result3.ml3,c:"#e8a030"}].map(({l,v,c})=>(
+                      <div key={l} style={{ background:"#0a1206", borderRadius:8, padding:"10px 6px",
+                        textAlign:"center", border:`1px solid ${c}22` }}>
+                        <div style={{ fontSize:9, color:"#5a7040", textTransform:"uppercase",
+                          letterSpacing:"0.06em", marginBottom:4 }}>{l}</div>
+                        <div style={{ fontSize:22, fontWeight:700, color:c,
+                          fontFamily:"'DM Mono',monospace" }}>{v}</div>
+                        <div style={{ fontSize:11, color:"#4a6030" }}>ml</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Cannabinoids */}
+                  <div style={{ background:"#0a1206", borderRadius:8, padding:12 }}>
+                    <div style={{ fontSize:9, letterSpacing:"0.1em", textTransform:"uppercase",
+                      color:"#4a6030", marginBottom:8 }}>Concentración resultante</div>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
+                      {[{label:"THC",val:result3.resultTHC,color:"#a8c870"},{label:"CBD",val:result3.resultCBD,color:"#60b89a"}].map(({label,val,color})=>(
+                        <div key={label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                          <span style={{ fontSize:12, color:"#7a9a50", fontWeight:600 }}>{label}</span>
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:20, fontWeight:700, color }}>{val}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div style={{ textAlign:"center", padding:"12px 0" }}>
+                  <div style={{ fontSize:26, marginBottom:10 }}>⚠</div>
+                  <div style={{ color:"#c06060", fontSize:13, lineHeight:1.6 }}>{result3?.warning}</div>
+                </div>
+              )}
+
+              {/* PDF 3-oil */}
+              {result3?.feasible && (
+                <ThreeOilReportButton oils3={oils3} result3={result3} vol3={vol3}
+                  target3THC={target3THC} target3CBD={target3CBD} />
+              )}
+            </div>
+          </div>
+        )}
+
+        <div style={{ textAlign:"center", marginTop:24, borderTop:"1px solid #1a2a10", paddingTop:16 }}>
+          <p style={{ fontSize:11, color:"#4a6030", lineHeight:1.6, margin:"0 0 10px 0", fontStyle:"italic" }}>
+            Calculadora orientativa. No constituye una prescripción médica ni una recomendación terapéutica. El uso de cannabis medicinal requiere supervisión profesional.
+          </p>
+          <div style={{ fontSize:10, color:"#1a2a10", letterSpacing:"0.1em" }}>
+            Aceite de Cannabis Medicinal Blend
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
