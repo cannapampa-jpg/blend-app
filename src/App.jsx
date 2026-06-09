@@ -137,182 +137,205 @@ function buildPDFData({ userEmail, thc1, cbd1, thc2, cbd2, mode, sliderPct1, sli
 async function generatePDF(data) {
   const JsPDF = await loadJsPDF();
   const doc = new JsPDF({ unit: "mm", format: "a4" });
-  const W = 210, ML = 18, MR = 18, TW = W - ML - MR;
+  const W = 210, ML = 18, TW = W - 36;
 
-  // ── Paleta ──
-  const verde    = [95, 140, 40];
-  const verdeMid = [80, 120, 55];
-  const verdeOsc = [20, 35, 10];
-  const grisOsc  = [30, 30, 30];
-  const grisText = [80, 80, 80];
-  const blanco   = [255, 255, 255];
-  const amarillo = [220, 180, 50];
+  // Paleta
+  const VERDE_OSC = [20, 35, 10];
+  const VERDE     = [95, 140, 40];
+  const VERDE_MID = [80, 120, 55];
+  const VERDE_CLR = [168, 200, 112];
+  const TEAL      = [38, 153, 122];
+  const BLANCO    = [255, 255, 255];
+  const GRIS_OSC  = [30, 30, 30];
+  const GRIS_MID  = [128, 128, 128];
 
-  // ── Header band ──
-  doc.setFillColor(...verdeOsc);
-  doc.rect(0, 0, W, 38, "F");
-  doc.setFillColor(...verde);
-  doc.rect(0, 36, W, 2, "F");
-
-  // Logo text
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(18);
-  doc.setTextColor(...blanco);
-  doc.text("Cannabis Oil Blender", ML, 16);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.setTextColor(180, 210, 120);
-  doc.text("Ing. Agr. Matías Bucat  ·  Responsable Técnico REPROCANN  ·  MN 18563", ML, 24);
-  doc.text(`Informe generado el ${data.fecha} a las ${data.hora}`, ML, 30);
-
-  // ── Datos del solicitante ──
-  let y = 48;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(...verde);
-  doc.text("SOLICITANTE", ML, y);
-  doc.setDrawColor(...verde);
-  doc.setLineWidth(0.3);
-  doc.line(ML, y+1.5, ML+TW, y+1.5);
-
-  y += 8;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(...grisOsc);
-  doc.text(`Email:  ${data.userEmail}`, ML, y);
-
-  // ── Aceites de origen ──
-  y += 14;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(...verde);
-  doc.text("ACEITES DE ORIGEN", ML, y);
-  doc.line(ML, y+1.5, ML+TW, y+1.5);
-
-  y += 8;
-  // Table header
-  const colW = [TW*0.35, TW*0.32, TW*0.33];
-  const cols = [ML, ML+colW[0], ML+colW[0]+colW[1]];
-  doc.setFillColor(...verde);
-  doc.rect(ML, y-4.5, TW, 7, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  doc.setTextColor(...blanco);
-  ["Aceite", "THC %", "CBD %"].forEach((h, i) => doc.text(h, cols[i]+2, y));
-
-  y += 5;
-  [
-    ["Aceite 1", data.thc1+"%", data.cbd1+"%"],
-    ["Aceite 2", data.thc2+"%", data.cbd2+"%"],
-  ].forEach((row, ri) => {
-    doc.setFillColor(ri%2===0 ? 245 : 252, ri%2===0 ? 248 : 254, ri%2===0 ? 238 : 248);
-    doc.rect(ML, y-4, TW, 7, "F");
-    doc.setFont("helvetica", ri===0 ? "bold":"normal");
-    doc.setFontSize(9.5);
-    doc.setTextColor(...grisOsc);
-    row.forEach((cell, i) => doc.text(cell, cols[i]+2, y));
-    y += 7;
-  });
-
-  // ── Mezcla calculada ──
-  y += 8;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(...verde);
-  doc.text("MEZCLA CALCULADA", ML, y);
-  doc.line(ML, y+1.5, ML+TW, y+1.5);
-
-  y += 8;
   const m = data.mezcla;
+  const fecha = data.fecha;
 
-  // Modo badge
-  doc.setFillColor(...verdeMid);
-  doc.roundedRect(ML, y-4, 60, 7, 2, 2, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.setTextColor(...blanco);
-  doc.text(m.modo.toUpperCase(), ML+3, y);
-  if (m.objetivo) {
-    doc.setFillColor(...amarillo);
-    doc.roundedRect(ML+63, y-4, 40, 7, 2, 2, "F");
-    doc.setTextColor(40,30,0);
-    doc.text(`Objetivo: ${m.objetivo}`, ML+65, y);
+  // ── HEADER ──────────────────────────────────────────────────────────────────
+  doc.setFillColor(...VERDE_OSC);
+  doc.rect(0, 0, W, 22, "F");
+  doc.setFillColor(...VERDE);
+  doc.rect(0, 22, W, 1.5, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(15);
+  doc.setTextColor(...BLANCO);
+  doc.text("Aceite de Cannabis Medicinal", ML, 10);
+  doc.setFillColor(...VERDE_CLR);
+  doc.setFont("helvetica","bold"); doc.setFontSize(9);
+  doc.setTextColor(...VERDE_CLR);
+  doc.text("Blend", ML, 17);
+  doc.setFont("helvetica","normal"); doc.setFontSize(8);
+  doc.setTextColor(100, 140, 60);
+  doc.text(fecha, W-ML, 17, { align:"right" });
+
+  // ── SECCIÓN TITLE helper ──────────────────────────────────────────────────
+  function sectionTitle(y, text) {
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.5);
+    doc.setTextColor(...VERDE);
+    doc.text(text, ML, y);
+    doc.setDrawColor(...VERDE); doc.setLineWidth(0.3);
+    doc.line(ML, y+1.5, ML+TW, y+1.5);
+    return y + 11;
   }
 
-  y += 10;
-  // Proporción visual bar
-  const barW = TW;
-  const barH = 8;
-  const p1 = typeof m.proporcion1 === "number" ? m.proporcion1 : 50;
-  doc.setFillColor(95, 140, 40);
-  doc.roundedRect(ML, y, barW * p1/100, barH, 1, 1, "F");
-  doc.setFillColor(40, 140, 100);
-  doc.roundedRect(ML + barW*p1/100, y, barW*(1-p1/100), barH, 1, 1, "F");
-  doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(...blanco);
-  if (p1 > 15) doc.text(`A1 ${m.proporcion1}%`, ML+3, y+5.5);
-  if ((100-p1) > 15) doc.text(`A2 ${m.proporcion2}%`, ML+barW*(p1/100)+3, y+5.5);
+  // ── OBJETIVO ────────────────────────────────────────────────────────────────
+  let y = 32;
+  y = sectionTitle(y, "OBJETIVO");
 
-  y += 13;
-  // Volumes table
-  doc.setFillColor(...verde);
-  doc.rect(ML, y-4.5, TW, 7, "F");
-  doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(...blanco);
-  ["", "Aceite 1", "Aceite 2", "Total"].forEach((h,i) => {
-    doc.text(h, cols[0]+(i===0?0:(i-1)*colW[1])+2, y);
+  // Bloque verde oscuro
+  doc.setFillColor(33, 56, 15);
+  doc.roundedRect(ML, y, TW, 26, 2, 2, "F");
+  doc.setDrawColor(...VERDE_CLR); doc.setLineWidth(0.5);
+  doc.roundedRect(ML, y, TW, 26, 2, 2, "S");
+  doc.setFillColor(...VERDE_CLR);
+  doc.rect(ML, y+3, 2.5, 20, "F");
+
+  // Label PREPARAR
+  doc.setFont("helvetica","bold"); doc.setFontSize(7);
+  doc.setTextColor(...VERDE_CLR);
+  doc.text("PREPARAR", ML+6, y+6);
+
+  // 3 columnas: Volumen | THC | CBD
+  const colW3 = TW / 3;
+  const items3 = [
+    { val: m.volumen + " ml", label: "Volumen", col: [217, 242, 178] },
+    { val: m.thcFinal + "%",  label: "THC",     col: [...VERDE_CLR] },
+    { val: m.cbdFinal + "%",  label: "CBD",     col: [115, 224, 184] },
+  ];
+  items3.forEach(({ val, label, col }, i) => {
+    const cx = ML + colW3*i + colW3/2;
+    if (i > 0) {
+      doc.setDrawColor(75, 128, 38); doc.setLineWidth(0.3);
+      doc.line(ML+colW3*i, y+8, ML+colW3*i, y+22);
+    }
+    doc.setFont("helvetica","bold"); doc.setFontSize(16);
+    doc.setTextColor(...col);
+    doc.text(val, cx, y+19, { align:"center" });
+    doc.setFont("helvetica","normal"); doc.setFontSize(7);
+    doc.setTextColor(140, 184, 96);
+    doc.text(label, cx, y+24, { align:"center" });
   });
-  const vCols = [ML, ML+TW*0.28, ML+TW*0.56, ML+TW*0.78];
+  y += 32;
 
-  y += 5;
-  [
-    ["Proporción", m.proporcion1+"%", m.proporcion2+"%", "100%"],
-    ["Volumen (ml)", m.ml1+" ml", m.ml2+" ml", m.volumen+" ml"],
-  ].forEach((row, ri) => {
-    doc.setFillColor(ri%2===0 ? 245:252, ri%2===0 ? 248:254, ri%2===0 ? 238:248);
-    doc.rect(ML, y-4, TW, 7, "F");
-    doc.setFont("helvetica", ri===0?"normal":"bold");
-    doc.setFontSize(9.5); doc.setTextColor(...grisOsc);
-    row.forEach((cell,i) => doc.text(String(cell), vCols[i]+2, y));
+  // ── ACEITES BASE ────────────────────────────────────────────────────────────
+  y = sectionTitle(y, "ACEITES BASE");
+
+  // Header tabla
+  const c1 = [ML, ML+TW*0.5, ML+TW*0.75];
+  doc.setFillColor(...VERDE_MID);
+  doc.rect(ML, y-4, TW, 7, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(8.5);
+  doc.setTextColor(...BLANCO);
+  doc.text("Aceite base", c1[0]+2, y);
+  doc.text("THC %", c1[1]+2, y);
+  doc.text("CBD %", c1[2]+2, y);
+  y += 4;
+
+  // Filas aceites
+  const aceites = data.aceites || [
+    { nombre: data.name1 || "Aceite 1", thc: data.thc1, cbd: data.cbd1 },
+    { nombre: data.name2 || "Aceite 2", thc: data.thc2, cbd: data.cbd2 },
+  ];
+  if (data.thc3 !== undefined && data.thc3 > 0 || data.cbd3 > 0) {
+    aceites.push({ nombre: data.name3 || "Aceite 3", thc: data.thc3, cbd: data.cbd3 });
+  }
+  aceites.forEach((a, i) => {
+    doc.setFillColor(i%2===0 ? 245:252, i%2===0 ? 248:254, i%2===0 ? 238:248);
+    doc.rect(ML, y-3, TW, 7, "F");
+    doc.setFont("helvetica","normal"); doc.setFontSize(9);
+    doc.setTextColor(...GRIS_OSC);
+    doc.text(a.nombre, c1[0]+2, y+1);
+    doc.text(a.thc+"%", c1[1]+2, y+1);
+    doc.text(a.cbd+"%", c1[2]+2, y+1);
     y += 7;
   });
+  y += 6;
 
-  // ── Concentración resultante ──
-  y += 8;
-  doc.setFont("helvetica","bold"); doc.setFontSize(10);
-  doc.setTextColor(...verde);
-  doc.text("CONCENTRACIÓN RESULTANTE", ML, y);
-  doc.line(ML, y+1.5, ML+TW, y+1.5);
+  // ── VOLÚMENES A MEZCLAR ─────────────────────────────────────────────────────
+  y = sectionTitle(y, "VOLÚMENES A MEZCLAR");
 
-  y += 10;
-  const halfW = (TW - 6) / 2;
+  // Header
+  const mls = data.mlsExtra || [];
+  const hasTres = mls.length > 0;
+  const c2 = hasTres
+    ? [ML, ML+TW*0.4, ML+TW*0.62, ML+TW*0.82]
+    : [ML, ML+TW*0.4, ML+TW*0.65, ML+TW*0.82];
+  const headers2 = hasTres
+    ? ["Aceite base","Volumen","Proporción",""]
+    : ["Aceite base","Volumen","Proporción",""];
+
+  doc.setFillColor(...VERDE_MID);
+  doc.rect(ML, y-4, TW, 7, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(8.5);
+  doc.setTextColor(...BLANCO);
+  ["Aceite base","Volumen","Proporción"].forEach((h,i) => doc.text(h, c2[i]+2, y));
+  y += 4;
+
+  // Filas mezcla
+  const mezRows = [];
+  if (hasTres) {
+    mezRows.push([data.name1||"Aceite 1", m.ml1+" ml", m.pct1+"%"]);
+    mezRows.push([data.name2||"Aceite 2", m.ml2+" ml", m.pct2+"%"]);
+    mezRows.push([data.name3||"Aceite 3", mls[0]+" ml", mls[1]+"%"]);
+  } else {
+    mezRows.push([data.name1||"Aceite 1", m.ml1+" ml", m.proporcion1+"%"]);
+    mezRows.push([data.name2||"Aceite 2", m.ml2+" ml", m.proporcion2+"%"]);
+  }
+  mezRows.forEach((row, i) => {
+    doc.setFillColor(i%2===0 ? 245:252, i%2===0 ? 248:254, i%2===0 ? 238:248);
+    doc.rect(ML, y-3, TW, 7, "F");
+    doc.setFont("helvetica","normal"); doc.setFontSize(9);
+    doc.setTextColor(...GRIS_OSC);
+    row.forEach((cell,j) => doc.text(String(cell), c2[j]+2, y+1));
+    y += 7;
+  });
+  // Fila total
+  doc.setFillColor(225, 240, 200);
+  doc.rect(ML, y-3, TW, 7, "F");
+  doc.setFont("helvetica","bold"); doc.setFontSize(9);
+  doc.setTextColor(...VERDE_OSC);
+  doc.text("TOTAL", c2[0]+2, y+1);
+  doc.text(m.volumen+" ml", c2[1]+2, y+1);
+  doc.text("100%", c2[2]+2, y+1);
+  y += 13;
+
+  // ── RESULTADO ESPERADO ──────────────────────────────────────────────────────
+  y = sectionTitle(y, "RESULTADO ESPERADO");
+  const hw = (TW - 6) / 2;
   [
-    { label:"THC", val:m.thcFinal+"%", color:[95,140,40] },
-    { label:"CBD", val:m.cbdFinal+"%", color:[40,140,100] },
-  ].forEach(({ label, val, color }, i) => {
-    const bx = ML + i*(halfW+6);
-    doc.setFillColor(...color);
-    doc.roundedRect(bx, y-6, halfW, 18, 3, 3, "F");
-    doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(...blanco);
-    doc.text(label, bx+halfW/2, y, { align:"center" });
-    doc.setFontSize(20);
-    doc.text(String(val), bx+halfW/2, y+9, { align:"center" });
+    { label:"THC resultante", val:m.thcFinal+"%", col:VERDE_MID },
+    { label:"CBD resultante", val:m.cbdFinal+"%", col:TEAL },
+  ].forEach(({ label, val, col }, i) => {
+    const bx = ML + i*(hw+6);
+    doc.setFillColor(...col);
+    doc.roundedRect(bx, y, hw, 18, 2, 2, "F");
+    doc.setFont("helvetica","normal"); doc.setFontSize(8);
+    doc.setTextColor(...BLANCO);
+    doc.text(label, bx+hw/2, y+6, { align:"center" });
+    doc.setFont("helvetica","bold"); doc.setFontSize(16);
+    doc.text(val, bx+hw/2, y+15, { align:"center" });
   });
 
-  // ── Footer ──
-  y = 274;
-  doc.setFillColor(...verdeOsc);
-  doc.rect(0, y, W, 23, "F");
-  doc.setFillColor(...verde);
-  doc.rect(0, y, W, 1.5, "F");
-  doc.setFont("helvetica","normal"); doc.setFontSize(8);
-  doc.setTextColor(180,210,120);
-  doc.text("Ing. Agr. Matías Bucat  ·  MN 18563  ·  Responsable Técnico REPROCANN  ·  Ley 27.350", W/2, y+8, { align:"center" });
-  doc.setTextColor(120,160,80);
-  doc.text("Este informe es orientativo. Las concentraciones finales dependen de la homogeneidad de los aceites base.", W/2, y+15, { align:"center" });
-  doc.text(`cannapampa@gmail.com  ·  ${data.fecha}`, W/2, y+20, { align:"center" });
+  // ── FOOTER ───────────────────────────────────────────────────────────────────
+  const fy = 267;
+  doc.setFillColor(...VERDE_OSC);
+  doc.rect(0, fy, W, 30, "F");
+  doc.setFillColor(...VERDE);
+  doc.rect(0, fy, W, 1.5, "F");
+  doc.setFont("helvetica","normal"); doc.setFontSize(6.5);
+  doc.setTextColor(140, 184, 96);
+  const disc = [
+    "Esta herramienta realiza cálculos orientativos de mezcla y no constituye una prescripción médica ni una recomendación terapéutica.",
+    "Los resultados dependen de los datos ingresados por el usuario, quien asume la responsabilidad por su utilización.",
+    "La preparación y el uso de derivados de cannabis medicinal deben realizarse conforme a la normativa vigente y bajo supervisión profesional."
+  ];
+  disc.forEach((line, i) => {
+    doc.text(line, W/2, fy+7+(i*6), { align:"center" });
+  });
 
   return doc;
 }
+
 
 // ── EmailJS sender ────────────────────────────────────────────────────────────
 
@@ -491,13 +514,10 @@ function ReportModal({ onClose, pdfDataArgs }) {
       const pdfDoc  = await generatePDF(pdfData);
 
       // Siempre descargar localmente
-      pdfDoc.save(`informe-mezcla-${Date.now()}.pdf`);
+      const fechaFile = new Date().toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"}).replace(/\//g,"-"); pdfDoc.save(`blend-formulacion-${fechaFile}.pdf`);
 
-      if (isConfigured) {
-        setStatus("sending");
-        await sendReport({ userEmail: email, pdfDoc, pdfData });
-        await logToSheets(pdfData, email);
-      }
+      // Log en Sheets (sin envío de mail)
+      await logToSheets(pdfData, email);
       setStatus("done");
     } catch (e) {
       console.error(e);
@@ -508,8 +528,8 @@ function ReportModal({ onClose, pdfDataArgs }) {
 
   const statusMsg = {
     generating: "Generando PDF...",
-    sending:    "Enviando por email...",
-    done:       isConfigured ? "✓ PDF enviado y descargado" : "✓ PDF descargado",
+    sending:    "Registrando...",
+    done:       "✓ PDF descargado correctamente",
     error:      errMsg || "Algo falló.",
   };
 
@@ -591,7 +611,7 @@ function ReportModal({ onClose, pdfDataArgs }) {
               width:"100%", padding:"13px 0", background:"linear-gradient(135deg,#6a9a2a,#3a8a5a)",
               border:"none", borderRadius:8, color:"#f0f8e0", fontSize:15, fontWeight:700,
               cursor:"pointer", fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.02em" }}>
-              {isConfigured ? "Generar PDF y enviar" : "Descargar PDF"}
+              "Descargar PDF"
             </button>
           </>
         ) : (
