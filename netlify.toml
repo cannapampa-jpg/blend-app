@@ -6,3 +6,9 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+[[redirects]]
+  from = "https://aceite-medicinal-blend.netlify.app/*"
+  to = "https://formulador.matiasbucat.com.ar/:splat"
+  status = 301
+  force = true
