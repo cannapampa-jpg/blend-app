@@ -432,10 +432,16 @@ async function logToSheets(pdfData, userEmail) {
 function NumInput({ label, value, onChange, unit="%", min=0, max=100, step="0.1" }) {
   const [display, setDisplay] = useState(String(value));
 
-  // sync if parent changes value externally (e.g. chemotype button)
+  // sync if parent changes value externally (e.g. chemotype button or unit change)
   useEffect(() => {
     setDisplay(String(value));
   }, [value]);
+
+  // reset display to "0" when unit changes to avoid stale/blocked input
+  useEffect(() => {
+    setDisplay("0");
+    onChange(0);
+  }, [unit]);
 
   function handleChange(e) {
     const raw = e.target.value;
@@ -1262,7 +1268,7 @@ export default function App() {
   const [name3, setName3] = useState("Aceite 3");
 
   const [oilMode, setOilMode] = useState(2);   // 2 or 3
-  const [inputUnit, setInputUnit] = useState("pct");
+  const [inputUnit, setInputUnit] = useState("mgml");
   const [tab, setTab]         = useState("rango");
   const [pct1, setPct1]       = useState(50);
   const [sliderVol, setSliderVol] = useState(100);
