@@ -1,5 +1,28 @@
 import { useState, useEffect, useRef } from "react";
 
+const DENSITY = 0.9;
+function pctToMgml(pct) { return +(pct * DENSITY * 10).toFixed(1); }
+function mgmlToPct(mgml) { return +(mgml / (DENSITY * 10)).toFixed(2); }
+
+function UnitToggle({ value, onChange }) {
+  return (
+    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+      <span style={{ fontSize:10, color:"#5a7040", letterSpacing:"0.08em", textTransform:"uppercase" }}>Unidad</span>
+      <div style={{ display:"flex", gap:3, background:"#0e1408", border:"1px solid #2a3a1a", borderRadius:6, padding:3 }}>
+        {[{id:"pct",label:"%"},{id:"mgml",label:"mg/ml"}].map(opt => (
+          <button key={opt.id} onClick={() => onChange(opt.id)} style={{
+            padding:"4px 10px", borderRadius:4, border:"none", cursor:"pointer",
+            fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:700,
+            background: value===opt.id ? "#2a4a20" : "transparent",
+            color: value===opt.id ? "#a8c870" : "#3a5030", transition:"all 0.15s"
+          }}>{opt.label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIGURACIÓN — completar después de crear cuenta EmailJS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,25 +220,32 @@ async function generatePDF(data) {
 
   // 3 columnas: Volumen | THC | CBD
   const colW3 = TW / 3;
+  const thcMgml = typeof m.thcFinal === "number" ? pctToMgml(m.thcFinal) : "-";
+  const cbdMgml = typeof m.cbdFinal === "number" ? pctToMgml(m.cbdFinal) : "-";
   const items3 = [
-    { val: m.volumen + " ml", label: "Volumen", col: [217, 242, 178] },
-    { val: m.thcFinal + "%",  label: "THC",     col: [...VERDE_CLR] },
-    { val: m.cbdFinal + "%",  label: "CBD",     col: [115, 224, 184] },
+    { val: m.volumen + " ml", label: "Volumen",        col: [217, 242, 178], sub: null },
+    { val: m.thcFinal + "%",  label: "THC",            col: [...VERDE_CLR],  sub: thcMgml + " mg/ml" },
+    { val: m.cbdFinal + "%",  label: "CBD",            col: [115, 224, 184], sub: cbdMgml + " mg/ml" },
   ];
-  items3.forEach(({ val, label, col }, i) => {
+  items3.forEach(({ val, label, col, sub }, i) => {
     const cx = ML + colW3*i + colW3/2;
     if (i > 0) {
       doc.setDrawColor(75, 128, 38); doc.setLineWidth(0.3);
       doc.line(ML+colW3*i, y+8, ML+colW3*i, y+22);
     }
-    doc.setFont("helvetica","bold"); doc.setFontSize(16);
+    doc.setFont("helvetica","bold"); doc.setFontSize(sub ? 14 : 16);
     doc.setTextColor(...col);
-    doc.text(val, cx, y+19, { align:"center" });
+    doc.text(val, cx, sub ? y+17 : y+19, { align:"center" });
+    if (sub) {
+      doc.setFont("helvetica","normal"); doc.setFontSize(6.5);
+      doc.setTextColor(115, 175, 130);
+      doc.text(sub, cx, y+22, { align:"center" });
+    }
     doc.setFont("helvetica","normal"); doc.setFontSize(7);
     doc.setTextColor(140, 184, 96);
-    doc.text(label, cx, y+24, { align:"center" });
+    doc.text(label, cx, y+26, { align:"center" });
   });
-  y += 32;
+  y += 34;
 
   // ── ACEITES BASE ────────────────────────────────────────────────────────────
   y = sectionTitle(y, "ACEITES BASE");
@@ -303,17 +333,20 @@ async function generatePDF(data) {
   y = sectionTitle(y, "RESULTADO ESPERADO");
   const hw = (TW - 6) / 2;
   [
-    { label:"THC resultante", val:m.thcFinal+"%", col:VERDE_MID },
-    { label:"CBD resultante", val:m.cbdFinal+"%", col:TEAL },
-  ].forEach(({ label, val, col }, i) => {
+    { label:"THC resultante", val:m.thcFinal+"%", mgml: typeof m.thcFinal==="number"?pctToMgml(m.thcFinal)+"":" ", col:VERDE_MID },
+    { label:"CBD resultante", val:m.cbdFinal+"%", mgml: typeof m.cbdFinal==="number"?pctToMgml(m.cbdFinal)+"":" ", col:TEAL },
+  ].forEach(({ label, val, mgml, col }, i) => {
     const bx = ML + i*(hw+6);
     doc.setFillColor(...col);
-    doc.roundedRect(bx, y, hw, 18, 2, 2, "F");
-    doc.setFont("helvetica","normal"); doc.setFontSize(8);
+    doc.roundedRect(bx, y, hw, 22, 2, 2, "F");
+    doc.setFont("helvetica","normal"); doc.setFontSize(7.5);
     doc.setTextColor(...BLANCO);
     doc.text(label, bx+hw/2, y+6, { align:"center" });
-    doc.setFont("helvetica","bold"); doc.setFontSize(16);
-    doc.text(val, bx+hw/2, y+15, { align:"center" });
+    doc.setFont("helvetica","bold"); doc.setFontSize(15);
+    doc.text(val, bx+hw/2, y+14, { align:"center" });
+    doc.setFont("helvetica","normal"); doc.setFontSize(7);
+    doc.setTextColor(220, 240, 200);
+    doc.text("≈ " + mgml + " mg/ml", bx+hw/2, y+20, { align:"center" });
   });
 
   // ── FOOTER ───────────────────────────────────────────────────────────────────
@@ -441,7 +474,7 @@ function NumInput({ label, value, onChange, unit="%", min=0, max=100, step="0.1"
   );
 }
 
-function OilCard({ num, thc, cbd, onTHC, onCBD, color, name, onName }) {
+function OilCard({ num, thc, cbd, onTHC, onCBD, color, name, onName, inputUnit="pct" }) {
   const [editing, setEditing] = useState(false);
   const displayName = name || `Aceite ${num}`;
   return (
@@ -466,8 +499,8 @@ function OilCard({ num, thc, cbd, onTHC, onCBD, color, name, onName }) {
         )}
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-        <NumInput label="THC" value={thc} onChange={onTHC} />
-        <NumInput label="CBD" value={cbd} onChange={onCBD} />
+        <NumInput label="THC" value={thc} onChange={onTHC} unit={inputUnit==="mgml"?"mg/ml":"%"} max={inputUnit==="mgml"?200:100} />
+        <NumInput label="CBD" value={cbd} onChange={onCBD} unit={inputUnit==="mgml"?"mg/ml":"%"} max={inputUnit==="mgml"?200:100} />
       </div>
     </div>
   );
@@ -672,11 +705,7 @@ function ChemotypeButtons({ thc1, cbd1, thc2, cbd2, onSelect }) {
               style={{ background:bg, border:`1px solid ${border}`, borderRadius:7,
                 padding:"8px 4px", cursor:"pointer", textAlign:"center",
                 transition:"border-color 0.15s", fontFamily:"'DM Sans',sans-serif" }}>
-              <div style={{ fontSize:10, fontWeight:700, color, marginBottom:1 }}>{sub}</div>
-              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace",
-                color:"#607850", lineHeight:1.6 }}>
-                {thc}% · {cbd}%
-              </div>
+              <div style={{ fontSize:10, fontWeight:700, color }}>{sub}</div>
             </button>
           );
         })}
@@ -727,10 +756,7 @@ function ChemotypeButtons3({ oils, onSelect }) {
               style={{ background:bg, border:`1px solid ${border}`, borderRadius:7,
                 padding:"8px 4px", cursor:"pointer", textAlign:"center",
                 fontFamily:"'DM Sans',sans-serif" }}>
-              <div style={{ fontSize:10, fontWeight:700, color, marginBottom:1 }}>{sub}</div>
-              <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color:"#607850", lineHeight:1.6 }}>
-                {targetTHC}% · {targetCBD}%
-              </div>
+              <div style={{ fontSize:10, fontWeight:700, color }}>{sub}</div>
             </button>
           );
         })}
@@ -773,11 +799,12 @@ function RangeSlider({ pct1, onChange, thc1, cbd1, thc2, cbd2 }) {
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginTop:8 }}>
         {[{label:"THC",val:thc,color:"#a8c870"},{label:"CBD",val:cbd,color:"#60b89a"}].map(({label,val,color})=>(
-          <div key={label} style={{ background:"#0e1a09", border:"1px solid #2a3a1a",
-            borderRadius:8, padding:"12px 14px", display:"flex",
-            justifyContent:"space-between", alignItems:"center" }}>
-            <span style={{ fontSize:12, color:"#6a8a50", fontWeight:600 }}>{label}</span>
-            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:22, fontWeight:700, color }}>{val}%</span>
+          <div key={label} style={{ background:"#0e1a09", border:"1px solid #2a3a1a", borderRadius:8, padding:"10px 14px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
+              <span style={{ fontSize:12, color:"#6a8a50", fontWeight:600 }}>{label}</span>
+              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:20, fontWeight:700, color }}>{val}%</span>
+            </div>
+            <div style={{ textAlign:"right", fontSize:10, color:"#3a5a30", fontFamily:"'DM Mono',monospace", marginTop:2 }}>≈ {pctToMgml(val)} mg/ml</div>
           </div>
         ))}
       </div>
@@ -805,11 +832,17 @@ function VolumeResult({ pct1, thc1, cbd1, thc2, cbd2 }) {
           </div>
         ))}
       </div>
-      <div style={{ marginTop:10, background:"#0a0f06", borderRadius:8, padding:"8px 14px",
-        display:"flex", justifyContent:"space-around" }}>
-        <span style={{ fontSize:12, color:"#5a7040" }}>THC <strong style={{color:"#a8c870",fontFamily:"'DM Mono',monospace"}}>{thc}%</strong></span>
-        <span style={{ fontSize:12, color:"#5a7040" }}>CBD <strong style={{color:"#60b89a",fontFamily:"'DM Mono',monospace"}}>{cbd}%</strong></span>
-        <span style={{ fontSize:12, color:"#5a7040" }}>Total <strong style={{color:"#c8dca0",fontFamily:"'DM Mono',monospace"}}>{vol} ml</strong></span>
+      <div style={{ marginTop:10, background:"#0a0f06", borderRadius:8, padding:"8px 14px" }}>
+        <div style={{ display:"flex", justifyContent:"space-around", marginBottom:3 }}>
+          <span style={{ fontSize:12, color:"#5a7040" }}>THC <strong style={{color:"#a8c870",fontFamily:"'DM Mono',monospace"}}>{thc}%</strong></span>
+          <span style={{ fontSize:12, color:"#5a7040" }}>CBD <strong style={{color:"#60b89a",fontFamily:"'DM Mono',monospace"}}>{cbd}%</strong></span>
+          <span style={{ fontSize:12, color:"#5a7040" }}>Total <strong style={{color:"#c8dca0",fontFamily:"'DM Mono',monospace"}}>{vol} ml</strong></span>
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-around" }}>
+          <span style={{ fontSize:10, color:"#2a4a20", fontFamily:"'DM Mono',monospace" }}>≈ {pctToMgml(thc)} mg/ml</span>
+          <span style={{ fontSize:10, color:"#2a4a20", fontFamily:"'DM Mono',monospace" }}>≈ {pctToMgml(cbd)} mg/ml</span>
+          <span style={{ fontSize:10 }}> </span>
+        </div>
       </div>
     </div>
   );
@@ -878,9 +911,12 @@ function CalcTab({ thc1, cbd1, thc2, cbd2 }) {
               <div style={{ fontSize:10, letterSpacing:"0.1em", textTransform:"uppercase", color:"#4a6030", marginBottom:10 }}>Concentración resultante</div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
                 {[{label:"THC",val:result.resultTHC,fixed:fixedCann==="THC"},{label:"CBD",val:result.resultCBD,fixed:fixedCann==="CBD"}].map(({label,val,fixed})=>(
-                  <div key={label} style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <span style={{ fontSize:13, color:"#7a9a50", fontWeight:600 }}>{label}</span>
-                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:20, fontWeight:700, color:fixed?"#a8c870":"#5a9a7a" }}>{val}%</span>
+                  <div key={label} style={{ marginBottom:6 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline" }}>
+                      <span style={{ fontSize:13, color:"#7a9a50", fontWeight:600 }}>{label}</span>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:20, fontWeight:700, color:fixed?"#a8c870":"#5a9a7a" }}>{val}%</span>
+                    </div>
+                    <div style={{ textAlign:"right", fontSize:10, color:"#3a5a30", fontFamily:"'DM Mono',monospace" }}>≈ {pctToMgml(val)} mg/ml</div>
                   </div>
                 ))}
               </div>
@@ -1226,6 +1262,7 @@ export default function App() {
   const [name3, setName3] = useState("Aceite 3");
 
   const [oilMode, setOilMode] = useState(2);   // 2 or 3
+  const [inputUnit, setInputUnit] = useState("pct");
   const [tab, setTab]         = useState("rango");
   const [pct1, setPct1]       = useState(50);
   const [sliderVol, setSliderVol] = useState(100);
@@ -1284,14 +1321,19 @@ export default function App() {
           ))}
         </div>
 
+        {/* Unit toggle */}
+        <div style={{ display:"flex", justifyContent:"flex-end", marginBottom:10 }}>
+          <UnitToggle value={inputUnit} onChange={setInputUnit} />
+        </div>
+
         {/* Oil cards */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom: oilMode===3 ? 8 : 10 }}>
-          <OilCard num="1" thc={thc1} cbd={cbd1} onTHC={setThc1} onCBD={setCbd1} color="#8fba3a" name={name1} onName={setName1} />
-          <OilCard num="2" thc={thc2} cbd={cbd2} onTHC={setThc2} onCBD={setCbd2} color="#3a9a7a" name={name2} onName={setName2} />
+          <OilCard num="1" thc={thc1} cbd={cbd1} onTHC={setThc1} onCBD={setCbd1} color="#8fba3a" name={name1} onName={setName1} inputUnit={inputUnit} />
+          <OilCard num="2" thc={thc2} cbd={cbd2} onTHC={setThc2} onCBD={setCbd2} color="#3a9a7a" name={name2} onName={setName2} inputUnit={inputUnit} />
         </div>
         {oilMode === 3 && (
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
-            <OilCard num="3" thc={thc3} cbd={cbd3} onTHC={setThc3} onCBD={setCbd3} color="#e8a030" name={name3} onName={setName3} />
+            <OilCard num="3" thc={thc3} cbd={cbd3} onTHC={setThc3} onCBD={setCbd3} color="#e8a030" name={name3} onName={setName3} inputUnit={inputUnit} />
             <div style={{ background:"#0d1209", border:"1px dashed #2a3a1a", borderRadius:12,
               display:"flex", alignItems:"center", justifyContent:"center" }}>
               <span style={{ fontSize:11, color:"#2a3a1a", fontFamily:"'DM Mono',monospace" }}>A3 cargado</span>
