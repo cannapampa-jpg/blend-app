@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://formulador.matiasbucat.com.ar/sitemap.xml
