@@ -1313,9 +1313,9 @@ async function generatePDFFlor(data) {
   y += 34;
 
   // EXTRACCIÓN
-  y = sectionTitle(y, "MÉTODO DE EXTRACCIÓN");
+  y = sectionTitle(y, "EFICIENCIA DE EXTRACCIÓN");
   doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(...GRIS_OSC);
-  doc.text(`${data.extraccionLabel}  ·  Eficiencia ${data.eficiencia}%`, ML, y);
+  doc.text(`${data.eficiencia}%`, ML, y);
   y += 12;
 
   // PERFIL FLOR
@@ -1487,7 +1487,6 @@ const TIPOS_EXTRACCION = [
   { id:"oliva",  label:"Aceite de oliva", E:0.70 },
   { id:"mct",    label:"Aceite MCT/coco", E:0.75 },
   { id:"alcohol",label:"Alcohólica",      E:0.85 },
-  { id:"manteca",label:"Manteca/cocción", E:0.60 },
 ];
 
 const CANNABINOIDES = [
@@ -1506,9 +1505,12 @@ function FlorTab() {
   const [objetivo, setObjetivo] = useState("THC");      // cannabinoide objetivo C*
   const [targetMgml, setTargetMgml] = useState(20);      // concentración objetivo mg/ml
   const [volumen, setVolumen] = useState(30);            // ml de aceite final
-  const [extraccion, setExtraccion] = useState("oliva");
+  const [eficienciaPct, setEficienciaPct] = useState(70); // % editable
+  const [dosisOpen, setDosisOpen] = useState(false);
+  const [dosisDia, setDosisDia] = useState(0);    // mg/día
+  const [gotasDia, setGotasDia] = useState(0);    // gotas/día
 
-  const E = TIPOS_EXTRACCION.find(t => t.id === extraccion)?.E || 0.70;
+  const E = eficienciaPct / 100;
   const P_obj = perfil[objetivo] || 0;
 
   // masa de flor según cannabinoide objetivo: m = (C* × V) / (P* × E)
@@ -1541,21 +1543,35 @@ function FlorTab() {
 
   return (
     <div>
-      {/* Tipo de extracción */}
+      {/* Eficiencia de extracción */}
       <div style={{ background:"#131a0d", border:"1px solid #2a3a1a", borderRadius:12, padding:16, marginBottom:12 }}>
         <div style={{ fontSize:10, letterSpacing:"0.15em", textTransform:"uppercase",
-          color:"#7a8a6a", marginBottom:12, fontWeight:600 }}>Tipo de extracción</div>
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
-          {TIPOS_EXTRACCION.map(t => (
-            <button key={t.id} onClick={() => setExtraccion(t.id)} style={{
-              padding:"10px 8px", borderRadius:8, cursor:"pointer", textAlign:"left",
-              background: extraccion===t.id ? "#1a2e10" : "#0e1408",
-              border: `1px solid ${extraccion===t.id ? "#4a7a20" : "#2a3a1a"}`,
-              fontFamily:"'DM Sans',sans-serif", transition:"all 0.15s" }}>
-              <div style={{ fontSize:12, fontWeight:700, color: extraccion===t.id ? "#a8c870" : "#6a8a50" }}>{t.label}</div>
-              <div style={{ fontSize:10, color:"#4a6030", fontFamily:"'DM Mono',monospace", marginTop:2 }}>Eficiencia {(t.E*100).toFixed(0)}%</div>
-            </button>
-          ))}
+          color:"#7a8a6a", marginBottom:10, fontWeight:600 }}>Eficiencia de extracción</div>
+
+        {/* Campo manual */}
+        <NumInput label="Eficiencia" value={eficienciaPct} onChange={setEficienciaPct} unit="%" min={1} max={100} step="1" />
+
+        {/* Atajos sugeridos */}
+        <div style={{ fontSize:10, color:"#4a6030", marginTop:12, marginBottom:7, letterSpacing:"0.05em" }}>
+          Valores sugeridos según método:
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:6 }}>
+          {TIPOS_EXTRACCION.map(t => {
+            const sel = eficienciaPct === Math.round(t.E*100);
+            return (
+              <button key={t.id} onClick={() => setEficienciaPct(Math.round(t.E*100))} style={{
+                padding:"9px 6px", borderRadius:8, cursor:"pointer", textAlign:"center",
+                background: sel ? "#1a2e10" : "#0e1408",
+                border: `1px solid ${sel ? "#4a7a20" : "#2a3a1a"}`,
+                fontFamily:"'DM Sans',sans-serif", transition:"all 0.15s" }}>
+                <div style={{ fontSize:11, fontWeight:700, color: sel ? "#a8c870" : "#6a8a50", marginBottom:1 }}>{t.label}</div>
+                <div style={{ fontSize:10, color:"#4a6030", fontFamily:"'DM Mono',monospace" }}>{(t.E*100).toFixed(0)}%</div>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ fontSize:10, color:"#3a5030", marginTop:10, lineHeight:1.5 }}>
+          Tocá un método para cargar su eficiencia sugerida, o ajustá el valor a mano según tu experiencia.
         </div>
       </div>
 
@@ -1605,9 +1621,79 @@ function FlorTab() {
           ))}
         </div>
 
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+        {/* Panel colapsable: calcular concentración desde dosis */}
+        {(() => {
+          const mgGota = gotasDia > 0 ? dosisDia / gotasDia : 0;
+          const concObjetivo = +(mgGota * GOTAS_POR_ML).toFixed(2);
+          const mlDia = +(gotasDia / GOTAS_POR_ML).toFixed(2);
+          return (
+            <div style={{ marginBottom:12, border:"1px solid #2a3a1a", borderRadius:10, overflow:"hidden" }}>
+              <button onClick={() => setDosisOpen(o => !o)} style={{
+                width:"100%", padding:"11px 14px", background:"#0e1408", border:"none", cursor:"pointer",
+                display:"flex", alignItems:"center", justifyContent:"space-between",
+                fontFamily:"'DM Sans',sans-serif" }}>
+                <span style={{ fontSize:12, color:"#8aaa60", fontWeight:600, textAlign:"left" }}>
+                  ¿No sabés la concentración objetivo? Calculala desde la dosis
+                </span>
+                <span style={{ fontSize:14, color:"#5a7040", transform: dosisOpen?"rotate(180deg)":"none", transition:"transform 0.2s" }}>⌄</span>
+              </button>
+
+              {dosisOpen && (
+                <div style={{ padding:"14px", background:"#0a1206" }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:12 }}>
+                    <NumInput label="Dosis indicada" value={dosisDia} onChange={setDosisDia} unit="mg/día" max={2000} step="1" />
+                    <NumInput label="Gotas por día" value={gotasDia} onChange={setGotasDia} unit="gotas" max={200} step="1" />
+                  </div>
+
+                  {dosisDia > 0 && gotasDia > 0 ? (
+                    <>
+                      <div style={{ display:"flex", justifyContent:"space-around", background:"#0e1a09",
+                        borderRadius:8, padding:"8px 10px", marginBottom:10 }}>
+                        <span style={{ fontSize:11, color:"#5a7040", fontFamily:"'DM Mono',monospace" }}>
+                          {mlDia} ml/día
+                        </span>
+                        <span style={{ fontSize:11, color:"#5a7040", fontFamily:"'DM Mono',monospace" }}>
+                          {mgGota.toFixed(2)} mg/gota
+                        </span>
+                      </div>
+
+                      <div style={{ background:"#0e1a09", border:"1px solid #4a7a20", borderRadius:8,
+                        padding:"12px", textAlign:"center", marginBottom:10 }}>
+                        <div style={{ fontSize:10, color:"#5a7040", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:3 }}>
+                          Concentración objetivo
+                        </div>
+                        <div style={{ fontSize:28, fontWeight:700, color:"#a8c870", fontFamily:"'DM Mono',monospace", lineHeight:1 }}>
+                          {concObjetivo} <span style={{ fontSize:14 }}>mg/ml</span>
+                        </div>
+                      </div>
+
+                      <button onClick={() => { setTargetMgml(concObjetivo); setDosisOpen(false); }} style={{
+                        width:"100%", padding:"11px 0", background:"linear-gradient(135deg,#4a7a1a,#2a6a3a)",
+                        border:"none", borderRadius:8, color:"#f0f8e0", fontSize:13, fontWeight:700,
+                        cursor:"pointer", fontFamily:"'DM Sans',sans-serif" }}>
+                        Usar esta concentración →
+                      </button>
+                    </>
+                  ) : (
+                    <div style={{ fontSize:11, color:"#4a6030", textAlign:"center", padding:"6px 0" }}>
+                      Completá dosis y gotas para calcular
+                    </div>
+                  )}
+
+                  <div style={{ fontSize:10, color:"#3a5030", lineHeight:1.5, marginTop:12,
+                    borderTop:"1px solid #1a2a10", paddingTop:10 }}>
+                    1 gota ≈ 0,05 ml (20 gotas = 1 ml). La concentración la elegís vos para que la dosis diaria
+                    entre en una cantidad de gotas cómoda. La dosis en mg/día la define el médico tratante.
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        <div style={{ display:"grid", gap:10 }}>
           <NumInput label={objetivo + " objetivo"} value={targetMgml} onChange={setTargetMgml} unit="mg/ml" max={100} step="0.5" />
-          <NumInput label="Volumen aceite" value={volumen} onChange={setVolumen} unit="ml" min={1} max={5000} step="1" />
+          <NumInput label="Volumen final de aceite" value={volumen} onChange={setVolumen} unit="ml" min={1} max={5000} step="1" />
         </div>
       </div>
 
@@ -1700,7 +1786,6 @@ function FlorTab() {
             <FlorReportButton florData={{
               volumen, targetMgml, objetivo,
               florG: florG.toFixed(2),
-              extraccionLabel: TIPOS_EXTRACCION.find(t=>t.id===extraccion)?.label || "",
               eficiencia: (E*100).toFixed(0),
               perfilFlor: CANNABINOIDES.filter(c=>activos[c.id]).map(c=>({id:c.id, mgg:perfil[c.id]})),
               perfilFinal: resultados.map(r=>({
