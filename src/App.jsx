@@ -1807,7 +1807,79 @@ function FlorTab() {
   );
 }
 
+// ── Modal de bienvenida / aceptación ──────────────────────────────────────────
+
+function WelcomeGate({ onAccept }) {
+  return (
+    <div style={{ position:"fixed", inset:0, background:"#050803", zIndex:2000,
+      display:"flex", alignItems:"center", justifyContent:"center", padding:16,
+      fontFamily:"'DM Sans',sans-serif", overflowY:"auto" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap');
+        * { box-sizing:border-box; }
+      `}</style>
+      <div style={{ background:"#131a0d", border:"1px solid #4a7a20", borderRadius:16,
+        padding:"30px 26px", width:"100%", maxWidth:440, position:"relative", margin:"auto" }}>
+        <div style={{ position:"absolute", top:0, left:0, right:0, height:3, borderRadius:"16px 16px 0 0",
+          background:"linear-gradient(90deg,#8fba3a,#3a9a7a)" }} />
+
+        {/* Título */}
+        <div style={{ textAlign:"center", marginBottom:22 }}>
+          <div style={{ fontSize:10, letterSpacing:"0.2em", textTransform:"uppercase",
+            color:"#4a6030", marginBottom:6 }}>Calculadora de formulación</div>
+          <h1 style={{ margin:0, fontSize:20, fontWeight:700, color:"#a8c870", letterSpacing:"-0.02em", lineHeight:1.3 }}>
+            Aceite de Cannabis Medicinal
+          </h1>
+          <div style={{ fontSize:12, color:"#4a7030", marginTop:3, fontFamily:"'DM Mono',monospace" }}>Blend</div>
+        </div>
+
+        {/* Aviso */}
+        <div style={{ borderTop:"1px solid #2a3a1a", paddingTop:18, marginBottom:22 }}>
+          <div style={{ fontSize:11, letterSpacing:"0.15em", textTransform:"uppercase",
+            color:"#5a8030", marginBottom:12, fontWeight:700, textAlign:"center" }}>
+            Aviso importante
+          </div>
+          {DISCLAIMER_TEXT.map((p, i) => (
+            <p key={i} style={{
+              fontSize:12,
+              color: i===DISCLAIMER_TEXT.length-1 ? "#a8c870" : "#8aaa70",
+              lineHeight:1.65,
+              fontWeight: i===DISCLAIMER_TEXT.length-1 ? 600 : 400,
+              fontStyle: i===DISCLAIMER_TEXT.length-1 ? "italic" : "normal",
+              margin:`0 0 ${i===DISCLAIMER_TEXT.length-1 ? 0 : 12}px 0`
+            }}>{p}</p>
+          ))}
+        </div>
+
+        {/* Botón */}
+        <button onClick={onAccept} style={{
+          width:"100%", padding:"14px 0",
+          background:"linear-gradient(135deg,#4a7a1a,#2a6a3a)",
+          border:"none", borderRadius:10, color:"#f0f8e0",
+          fontSize:15, fontWeight:700, cursor:"pointer",
+          fontFamily:"'DM Sans',sans-serif", letterSpacing:"0.02em" }}>
+          Acepto y continúo
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  // gate de aceptación
+  const [accepted, setAccepted] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("blend_accepted") === "1") setAccepted(true);
+    } catch(e) { /* sessionStorage no disponible */ }
+  }, []);
+
+  function handleAccept() {
+    try { sessionStorage.setItem("blend_accepted", "1"); } catch(e) {}
+    setAccepted(true);
+  }
+
   // shared oil state
   const [thc1, setThc1] = useState(0);
   const [cbd1, setCbd1] = useState(0);
@@ -1844,6 +1916,8 @@ export default function App() {
       setResult3(solve3({ oils: oils3, volume: vol3, targetTHC: target3THC, targetCBD: target3CBD }));
     }
   }, [thc1,cbd1,thc2,cbd2,thc3,cbd3,vol3,target3THC,target3CBD,oilMode]);
+
+  if (!accepted) return <WelcomeGate onAccept={handleAccept} />;
 
   return (
     <div style={{ minHeight:"100vh", background:"#0a0f06", fontFamily:"'DM Sans',sans-serif",
